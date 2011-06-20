@@ -143,6 +143,8 @@ jint init_globals() {
   return JNI_OK;
 }
 
+extern unsigned long total_safepoint_time;
+unsigned long vm_init_time;
 
 void exit_globals() {
   static bool destructorsCalled = false;
@@ -153,6 +155,7 @@ void exit_globals() {
       // Print the collected safepoint statistics.
       SafepointSynchronize::print_stat_on_exit();
     }
+    tty->print_cr("%lu\n%lu\n",total_safepoint_time, os::javaTimeMillis() - vm_init_time);
     ostream_exit();
   }
 }
@@ -168,4 +171,5 @@ bool is_init_completed() {
 void set_init_completed() {
   assert(Universe::is_fully_initialized(), "Should have completed initialization");
   _init_completed = true;
+  vm_init_time = os::javaTimeMillis();
 }

@@ -132,7 +132,7 @@ class VM_Operation: public CHeapObj {
   void set_timestamp(long timestamp)  { _timestamp = timestamp; }
 
   // Called by VM thread - does in turn invoke doit(). Do not override this
-  void evaluate();
+  virtual void evaluate();
 
   // evaluate() is called by the VMThread and in turn calls doit().
   // If the thread invoking VMThread::execute((VM_Operation*) is a JavaThread,

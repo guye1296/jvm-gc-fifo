@@ -67,6 +67,17 @@ void VM_GC_Operation::release_and_notify_pending_list_lock() {
   instanceRefKlass::release_and_notify_pending_list_lock(&_pending_list_basic_lock);
 }
 
+unsigned long total_safepoint_time = 0;
+
+void VM_GC_Operation::evaluate() {
+	if(SafepointSynchronize::is_at_safepoint()) {
+		unsigned long temp = os::javaTimeMillis();
+		VM_Operation::evaluate();
+		total_safepoint_time += os::javaTimeMillis() - temp;
+	}
+	else VM_Operation::evaluate();
+}
+
 // Allocations may fail in several threads at about the same time,
 // resulting in multiple gc requests.  We only want to do one of them.
 // In case a GC locker is active and the need for a GC is already signalled,

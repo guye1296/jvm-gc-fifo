@@ -112,6 +112,7 @@ class VM_GC_Operation: public VM_Operation {
     ch->collector_policy()->set_all_soft_refs_clear(false);
   }
 
+  void evaluate();
   // Acquire the reference synchronization lock
   virtual bool doit_prologue();
   // Do notifyAll (if needed) and release held lock
