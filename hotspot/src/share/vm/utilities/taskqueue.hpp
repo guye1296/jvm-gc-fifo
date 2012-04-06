@@ -606,7 +606,11 @@ public:
 
 #undef TRACESPINNING
 
+#ifdef REPLACE_MUTEX
+class ParallelTaskTerminator: public StackObj, public CHeapObj {
+#else
 class ParallelTaskTerminator: public StackObj {
+#endif
 private:
   int _n_threads;
   TaskQueueSetSuper* _queue_set;
@@ -624,7 +628,15 @@ protected:
   void sleep(uint millis);
 
 public:
-
+#ifdef REPLACE_MUTEX
+  void* operator new(size_t size) {
+    return CHeapObj::operator new(size);
+  }
+  void operator delete(void* p) {
+    CHeapObj::operator delete(p);
+  }
+  void initialize(int n_threads, TaskQueueSetSuper* queue_set);
+#endif
   // "n_threads" is the number of threads to be terminated.  "queue_set" is a
   // queue sets of work queues of other threads.
   ParallelTaskTerminator(int n_threads, TaskQueueSetSuper* queue_set);

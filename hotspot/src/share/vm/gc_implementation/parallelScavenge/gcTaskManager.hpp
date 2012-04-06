@@ -28,6 +28,9 @@
 #include "runtime/mutex.hpp"
 #include "utilities/growableArray.hpp"
 
+#ifdef REPLACE_MUTEX
+#include "utilities/taskqueue.hpp"
+#endif
 //
 // The GCTaskManager is a queue of GCTasks, and accessors
 // to allow the queue to be accessed from many threads.
@@ -55,7 +58,11 @@ class Monitor;
 class ThreadClosure;
 
 // The abstract base GCTask.
+#ifdef REPLACE_MUTEX
+class GCTask : public CHeapObj {
+#else
 class GCTask : public ResourceObj {
+#endif
 public:
   // Known kinds of GCTasks, for predicates.
   class Kind : AllStatic {
@@ -73,7 +80,9 @@ private:
   const Kind::kind _kind;               // For runtime type checking.
   const uint       _affinity;           // Which worker should run task.
   GCTask*          _newer;              // Tasks are on doubly-linked ...
+#ifndef REPLACE_MUTEX
   GCTask*          _older;              // ... lists.
+#endif
 public:
   virtual char* name() { return (char *)"task"; }
 
@@ -92,12 +101,16 @@ public:
   void set_newer(GCTask* n) {
     _newer = n;
   }
+#ifndef REPLACE_MUTEX
   GCTask* older() const {
     return _older;
   }
   void set_older(GCTask* p) {
     _older = p;
   }
+#else
+  virtual ~GCTask();
+#endif
   // Predicates.
   bool is_ordinary_task() const {
     return kind()==Kind::ordinary_task;
@@ -153,8 +166,13 @@ public:
     assert(((insert_end() == NULL && remove_end() == NULL) ||
             (insert_end() != NULL && remove_end() != NULL)),
            "insert_end and remove_end don't match");
+#ifndef REPLACE_MUTEX
     return insert_end() == NULL;
+#else
+    return remove_end() == NULL;
+#endif
   }
+
   uint length() const {
     return _length;
   }
@@ -187,6 +205,11 @@ protected:
   void set_remove_end(GCTask* value) {
     _remove_end = value;
   }
+#ifdef REPLACE_MUTEX
+  GCTask* set_remove_end_atomic(GCTask* new_val, GCTask* old_val) {
+    return (GCTask*) Atomic::cmpxchg_ptr(new_val, &_remove_end, old_val);
+  }
+#endif
   void increment_length() {
     _length += 1;
   }
@@ -295,8 +318,17 @@ private:
   // Instance state.
   NotifyDoneClosure*        _ndc;               // Notify on completion.
   const uint                _workers;           // Number of workers.
+#ifdef REPLACE_MUTEX
+  int                       _futex;
+  GCTaskQueue*              _queue;
+  ParallelTaskTerminator*  _terminator[2];
+  uint                      _terminator_idx;
+#else
   Monitor*                  _monitor;           // Notification of changes.
   SynchronizedGCTaskQueue*  _queue;             // Queue of tasks.
+  NoopGCTask*               _noop_task;         // The NoopGCTask instance.
+  uint                      _noop_tasks;        // Count of noop tasks.
+#endif
   GCTaskThread**            _thread;            // Array of worker threads.
   uint                      _busy_workers;      // Number of busy workers.
   uint                      _blocking_worker;   // The worker that's blocking.
@@ -305,8 +337,6 @@ private:
   uint                      _completed_tasks;   // Count of completed tasks.
   uint                      _barriers;          // Count of barrier tasks.
   uint                      _emptied_queue;     // Times we emptied the queue.
-  NoopGCTask*               _noop_task;         // The NoopGCTask instance.
-  uint                      _noop_tasks;        // Count of noop tasks.
 public:
   // Factory create and destroy methods.
   static GCTaskManager* create(uint workers) {
@@ -324,6 +354,7 @@ public:
   uint busy_workers() const {
     return _busy_workers;
   }
+#ifndef REPLACE_MUTEX
   //     Pun between Monitor* and Mutex*
   Monitor* monitor() const {
     return _monitor;
@@ -331,6 +362,13 @@ public:
   Monitor * lock() const {
     return _monitor;
   }
+#else
+  ParallelTaskTerminator* terminator(int n_threads, TaskQueueSetSuper* queue_set) {
+    _terminator_idx %= 2;
+    _terminator[_terminator_idx]->initialize(n_threads, queue_set);
+    return _terminator[_terminator_idx++];
+  }
+#endif
   // Methods.
   //     Add the argument task to be run.
   void add_task(GCTask* task);
@@ -378,12 +416,33 @@ protected:
   NotifyDoneClosure* notify_done_closure() const {
     return _ndc;
   }
-  SynchronizedGCTaskQueue* queue() const {
-    return _queue;
-  }
+#ifndef REPLACE_MUTEX
   NoopGCTask* noop_task() const {
     return _noop_task;
   }
+  SynchronizedGCTaskQueue* queue() const {
+    return _queue;
+  }
+  //     Count of the number of noop tasks we've handed out,
+  //     e.g., to handle resource release requests.
+  uint noop_tasks() const {
+    return _noop_tasks;
+  }
+  void increment_noop_tasks() {
+    _noop_tasks += 1;
+  }
+  void reset_noop_tasks() {
+    _noop_tasks = 0;
+  }
+#else
+  int* futex_addr() {
+    return &_futex;
+  }
+  GCTaskQueue* queue() const {
+    return _queue;
+  }
+#endif
+  
   //     Bounds-checking per-thread data accessors.
   GCTaskThread* thread(uint which);
   void set_thread(uint which, GCTaskThread* value);
@@ -446,17 +505,6 @@ protected:
   void reset_emptied_queue() {
     _emptied_queue = 0;
   }
-  //     Count of the number of noop tasks we've handed out,
-  //     e.g., to handle resource release requests.
-  uint noop_tasks() const {
-    return _noop_tasks;
-  }
-  void increment_noop_tasks() {
-    _noop_tasks += 1;
-  }
-  void reset_noop_tasks() {
-    _noop_tasks = 0;
-  }
   // Other methods.
   void initialize();
 };
@@ -516,6 +564,12 @@ protected:
     GCTask(GCTask::Kind::barrier_task) {
     // Nothing to do.
   }
+#ifdef REPLACE_MUTEX
+  BarrierGCTask(bool dummy) : // We don't need to make the last task barrier.
+    GCTask() {
+    // Nothing to do.
+  }
+#endif
   // Destructor-like method.
   void destruct();
   // Methods.
@@ -588,7 +642,11 @@ protected:
 class WaitForBarrierGCTask : public BarrierGCTask {
 private:
   // Instance state.
+#ifdef REPLACE_MUTEX
+  int        _futex;
+#else
   Monitor*   _monitor;                  // Guard and notify changes.
+#endif
   bool       _should_wait;              // true=>wait, false=>proceed.
   const bool _is_c_heap_obj;            // Was allocated on the heap.
 public:
@@ -607,9 +665,15 @@ protected:
   // Destructor-like method.
   void destruct();
   // Accessors.
+#ifdef REPLACE_MUTEX
+  int* futex_addr() {
+    return &_futex;
+  }
+#else
   Monitor* monitor() const {
     return _monitor;
   }
+#endif
   bool should_wait() const {
     return _should_wait;
   }

@@ -40,6 +40,9 @@ GCTaskThread::GCTaskThread(GCTaskManager* manager,
   _manager(manager),
   _processor_id(processor_id),
   _time_stamps(NULL),
+#ifdef REPLACE_MUTEX
+  _futex_ts(0),
+#endif
   _time_stamp_index(0)
 {
   if (!os::create_thread(this, os::pgc_thread))
@@ -134,6 +137,9 @@ void GCTaskThread::run() {
       char* name = task->name();
 
       task->do_it(manager(), which());
+#ifdef REPLACE_MUTEX
+      delete task;
+#endif
       manager()->note_completion(which());
 
       if (PrintGCTaskTimeStamps) {

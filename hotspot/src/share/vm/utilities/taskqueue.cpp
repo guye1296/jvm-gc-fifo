@@ -255,6 +255,14 @@ void ParallelTaskTerminator::print_termination_counts() {
 }
 #endif
 
+#ifdef REPLACE_MUTEX
+void ParallelTaskTerminator::initialize(int n_threads, TaskQueueSetSuper* queue_set) {
+  _offered_termination = 0;
+  _n_threads = n_threads;
+  _queue_set = queue_set;
+}
+#endif
+
 void ParallelTaskTerminator::reset_for_reuse() {
   if (_offered_termination != 0) {
     assert(_offered_termination == _n_threads,

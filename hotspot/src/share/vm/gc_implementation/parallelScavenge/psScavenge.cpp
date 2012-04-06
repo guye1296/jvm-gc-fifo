@@ -184,12 +184,21 @@ void PSRefProcTaskExecutor::execute(ProcessTask& task)
   for(uint i=0; i<ParallelGCThreads; i++) {
     q->enqueue(new PSRefProcTaskProxy(task, i));
   }
+#ifndef REPLACE_MUTEX
   ParallelTaskTerminator terminator(
+#else
+  ParallelTaskTerminator* terminator =
+                 ParallelScavengeHeap::gc_task_manager()->terminator(
+#endif
                  ParallelScavengeHeap::gc_task_manager()->workers(),
                  (TaskQueueSetSuper*) PSPromotionManager::stack_array_depth());
   if (task.marks_oops_alive() && ParallelGCThreads > 1) {
     for (uint j=0; j<ParallelGCThreads; j++) {
+#ifndef REPLACE_MUTEX
       q->enqueue(new StealTask(&terminator));
+#else
+      q->enqueue(new StealTask(terminator));
+#endif
     }
   }
   ParallelScavengeHeap::gc_task_manager()->execute_and_wait(q);
@@ -402,13 +411,21 @@ bool PSScavenge::invoke_no_policy() {
       q->enqueue(new ScavengeRootsTask(ScavengeRootsTask::system_dictionary));
       q->enqueue(new ScavengeRootsTask(ScavengeRootsTask::jvmti));
       q->enqueue(new ScavengeRootsTask(ScavengeRootsTask::code_cache));
-
+#ifndef REPLACE_MUTEX
       ParallelTaskTerminator terminator(
+#else
+      ParallelTaskTerminator* terminator =
+                  gc_task_manager()->terminator(
+#endif
                   gc_task_manager()->workers(),
                   (TaskQueueSetSuper*) promotion_manager->stack_array_depth());
       if (ParallelGCThreads>1) {
         for (uint j=0; j<ParallelGCThreads; j++) {
+#ifndef REPLACE_MUTEX
           q->enqueue(new StealTask(&terminator));
+#else
+          q->enqueue(new StealTask(terminator));
+#endif
         }
       }
 

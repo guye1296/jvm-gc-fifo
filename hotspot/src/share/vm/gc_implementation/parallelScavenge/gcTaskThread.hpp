@@ -39,7 +39,9 @@ private:
   // Instance state.
   GCTaskManager* _manager;              // Manager for worker.
   const uint     _processor_id;         // Which processor the worker is on.
-
+#ifdef REPLACE_MUTEX
+  int            _futex_ts;             // For replacing mutex of GCTaskQueue with futex
+#endif
   GCTaskTimeStamp* _time_stamps;
   uint _time_stamp_index;
 
@@ -64,6 +66,11 @@ private:
   virtual void run();
   // Methods.
   void start();
+
+#ifdef REPLACE_MUTEX
+  int futex_ts()                                    { return _futex_ts; }
+  void inc_futex_ts()                               { _futex_ts++;      }
+#endif
 
   void print_task_time_stamps();
   void print_on(outputStream* st) const;

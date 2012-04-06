@@ -2353,7 +2353,12 @@ void PSParallelCompact::marking_phase(ParCompactionManager* cm,
   ParallelScavengeHeap* heap = gc_heap();
   uint parallel_gc_threads = heap->gc_task_manager()->workers();
   TaskQueueSetSuper* qset = ParCompactionManager::region_array();
+#ifndef REPLACE_MUTEX
   ParallelTaskTerminator terminator(parallel_gc_threads, qset);
+#else
+  ParallelTaskTerminator* terminator =
+         heap->gc_task_manager()->terminator(parallel_gc_threads, qset);
+#endif
 
   PSParallelCompact::MarkAndPushClosure mark_and_push_closure(cm);
   PSParallelCompact::FollowStackClosure follow_stack_closure(cm);
@@ -2377,7 +2382,11 @@ void PSParallelCompact::marking_phase(ParCompactionManager* cm,
 
     if (parallel_gc_threads > 1) {
       for (uint j = 0; j < parallel_gc_threads; j++) {
+#ifdef REPLACE_MUTEX
+        q->enqueue(new StealMarkingTask(terminator));
+#else
         q->enqueue(new StealMarkingTask(&terminator));
+#endif
       }
     }
 
@@ -2387,9 +2396,10 @@ void PSParallelCompact::marking_phase(ParCompactionManager* cm,
     gc_task_manager()->add_list(q);
 
     fin->wait_for();
-
+#ifndef REPLACE_MUTEX
     // We have to release the barrier tasks!
     WaitForBarrierGCTask::destroy(fin);
+#endif
   }
 
   // Process reference objects found during marking
@@ -2645,13 +2655,18 @@ void PSParallelCompact::compact() {
   old_gen->start_array()->reset();
   uint parallel_gc_threads = heap->gc_task_manager()->workers();
   TaskQueueSetSuper* qset = ParCompactionManager::region_array();
-  ParallelTaskTerminator terminator(parallel_gc_threads, qset);
 
   GCTaskQueue* q = GCTaskQueue::create();
   enqueue_region_draining_tasks(q, parallel_gc_threads);
   enqueue_dense_prefix_tasks(q, parallel_gc_threads);
+#ifdef REPLACE_MUTEX
+  ParallelTaskTerminator* terminator =
+         heap->gc_task_manager()->terminator(parallel_gc_threads, qset);
+  enqueue_region_stealing_tasks(q, terminator, parallel_gc_threads);
+#else
+  ParallelTaskTerminator terminator(parallel_gc_threads, qset);
   enqueue_region_stealing_tasks(q, &terminator, parallel_gc_threads);
-
+#endif
   {
     TraceTime tm_pc("par compact", print_phases(), true, gclog_or_tty);
 
@@ -2661,10 +2676,10 @@ void PSParallelCompact::compact() {
     gc_task_manager()->add_list(q);
 
     fin->wait_for();
-
+#ifndef REPLACE_MUTEX
     // We have to release the barrier tasks!
     WaitForBarrierGCTask::destroy(fin);
-
+#endif
 #ifdef  ASSERT
     // Verify that all regions have been processed before the deferred updates.
     // Note that perm_space_id is skipped; this type of verification is not

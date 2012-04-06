@@ -30,6 +30,10 @@
 #include "runtime/mutex.hpp"
 #include "runtime/mutexLocker.hpp"
 
+#ifdef REPLACE_MUTEX
+#include <sys/syscall.h>
+#include <linux/futex.h>
+#endif
 //
 // GCTask
 //
@@ -80,21 +84,33 @@ GCTask::GCTask(Kind::kind kind, uint affinity) :
   initialize();
 }
 
+#ifdef REPLACE_MUTEX
+GCTask::~GCTask() {
+  // Nothing to do.
+}
+#endif
+
 void GCTask::initialize() {
+#ifndef REPLACE_MUTEX
   _older = NULL;
+#endif
   _newer = NULL;
 }
 
 void GCTask::destruct() {
+#ifndef REPLACE_MUTEX
   assert(older() == NULL, "shouldn't have an older task");
+#endif
   assert(newer() == NULL, "shouldn't have a newer task");
   // Nothing to do.
 }
 
 NOT_PRODUCT(
 void GCTask::print(const char* message) const {
+#ifndef REPLACE_MUTEX
   tty->print(INTPTR_FORMAT " <- " INTPTR_FORMAT "(%u) -> " INTPTR_FORMAT,
              newer(), this, affinity(), older());
+#endif
 }
 )
 
@@ -170,10 +186,12 @@ void GCTaskQueue::enqueue(GCTask* task) {
     print("before:");
   }
   assert(task != NULL, "shouldn't have null task");
-  assert(task->older() == NULL, "shouldn't be on queue");
   assert(task->newer() == NULL, "shouldn't be on queue");
   task->set_newer(NULL);
+#ifndef REPLACE_MUTEX
+  assert(task->older() == NULL, "shouldn't be on queue");
   task->set_older(insert_end());
+#endif
   if (is_empty()) {
     set_remove_end(task);
   } else {
@@ -208,7 +226,9 @@ void GCTaskQueue::enqueue(GCTaskQueue* list) {
     set_length(list_length);
   } else {
     // Prepend argument list to our queue.
+#ifndef REPLACE_MUTEX
     list->remove_end()->set_older(insert_end());
+#endif
     insert_end()->set_newer(list->remove_end());
     set_insert_end(list->insert_end());
     // empty the argument list.
@@ -228,9 +248,13 @@ GCTask* GCTaskQueue::dequeue() {
                   " GCTaskQueue::dequeue()", this);
     print("before:");
   }
+#ifndef REPLACE_MUTEX
   assert(!is_empty(), "shouldn't dequeue from empty list");
   GCTask* result = remove();
   assert(result != NULL, "shouldn't have NULL task");
+#else
+  GCTask* result = remove();
+#endif
   if (TraceGCTaskQueue) {
     tty->print_cr("    return: " INTPTR_FORMAT, result);
     print("after:");
@@ -271,7 +295,7 @@ GCTask* GCTaskQueue::dequeue(uint affinity) {
   }
   return result;
 }
-
+#ifndef REPLACE_MUTEX
 GCTask* GCTaskQueue::remove() {
   // Dequeue from remove end.
   GCTask* result = remove_end();
@@ -313,6 +337,31 @@ GCTask* GCTaskQueue::remove(GCTask* task) {
   decrement_length();
   return result;
 }
+#else
+GCTask* GCTaskQueue::remove() {
+  // Dequeue from remove end.
+  GCTask* temp = remove_end();
+  GCTask* result;
+  do {
+    if (temp == NULL) // Q is empty now.
+      return NULL;
+
+    result = temp;
+    temp = set_remove_end_atomic(result->newer(), result);
+  } while (temp != result);
+  assert(result != NULL, "shouldn't have null task");
+  if (result == insert_end()) {// The last GCTask has been claimed. Set insert_end to NULL.
+    assert(result->newer() == NULL && remove_end() == NULL, "sanity");
+    set_insert_end(NULL);
+  } else {
+    result->set_newer(NULL);
+  }
+  return result;
+}
+GCTask* GCTaskQueue::remove(GCTask* task) {
+  // We don't support it yet in lock-free code.
+}
+#endif
 
 NOT_PRODUCT(
 void GCTaskQueue::print(const char* message) const {
@@ -321,12 +370,14 @@ void GCTaskQueue::print(const char* message) const {
                 "  remove_end: " INTPTR_FORMAT
                 "  %s",
                 this, insert_end(), remove_end(), message);
+#ifndef REPLACE_MUTEX
   for (GCTask* element = insert_end();
        element != NULL;
        element = element->older()) {
     element->print("    ");
     tty->cr();
   }
+#endif
 }
 )
 
@@ -351,12 +402,20 @@ SynchronizedGCTaskQueue::~SynchronizedGCTaskQueue() {
 //
 GCTaskManager::GCTaskManager(uint workers) :
   _workers(workers),
+#ifdef REPLACE_MUTEX
+  _futex(0),
+  _terminator_idx(0),
+#endif
   _ndc(NULL) {
   initialize();
 }
 
 GCTaskManager::GCTaskManager(uint workers, NotifyDoneClosure* ndc) :
   _workers(workers),
+#ifdef REPLACE_MUTEX
+  _futex(0),
+  _terminator_idx(0),
+#endif
   _ndc(ndc) {
   initialize();
 }
@@ -366,6 +425,7 @@ void GCTaskManager::initialize() {
     tty->print_cr("GCTaskManager::initialize: workers: %u", workers());
   }
   assert(workers() != 0, "no workers");
+#ifndef REPLACE_MUTEX
   _monitor = new Monitor(Mutex::barrier,                // rank
                          "GCTaskManager monitor",       // name
                          Mutex::_allow_vm_block_flag);  // allow_vm_block
@@ -373,6 +433,12 @@ void GCTaskManager::initialize() {
   GCTaskQueue* unsynchronized_queue = GCTaskQueue::create_on_c_heap();
   _queue = SynchronizedGCTaskQueue::create(unsynchronized_queue, lock());
   _noop_task = NoopGCTask::create_on_c_heap();
+  reset_noop_tasks();
+#else
+  _queue = GCTaskQueue::create_on_c_heap();
+  _terminator[0] = new ParallelTaskTerminator(0, NULL);
+  _terminator[1] = new ParallelTaskTerminator(0, NULL);
+#endif
   _resource_flag = NEW_C_HEAP_ARRAY(bool, workers());
   {
     // Set up worker threads.
@@ -405,7 +471,6 @@ void GCTaskManager::initialize() {
   }
   reset_delivered_tasks();
   reset_completed_tasks();
-  reset_noop_tasks();
   reset_barriers();
   reset_emptied_queue();
   for (uint s = 0; s < workers(); s += 1) {
@@ -416,8 +481,6 @@ void GCTaskManager::initialize() {
 GCTaskManager::~GCTaskManager() {
   assert(busy_workers() == 0, "still have busy workers");
   assert(queue()->is_empty(), "still have queued work");
-  NoopGCTask::destroy(_noop_task);
-  _noop_task = NULL;
   if (_thread != NULL) {
     for (uint i = 0; i < workers(); i += 1) {
       GCTaskThread::destroy(thread(i));
@@ -430,16 +493,27 @@ GCTaskManager::~GCTaskManager() {
     FREE_C_HEAP_ARRAY(bool, _resource_flag);
     _resource_flag = NULL;
   }
+#ifndef REPLACE_MUTEX
   if (queue() != NULL) {
     GCTaskQueue* unsynchronized_queue = queue()->unsynchronized_queue();
     GCTaskQueue::destroy(unsynchronized_queue);
     SynchronizedGCTaskQueue::destroy(queue());
     _queue = NULL;
   }
+  NoopGCTask::destroy(_noop_task);
+  _noop_task = NULL;
   if (monitor() != NULL) {
     delete monitor();
     _monitor = NULL;
   }
+#else
+  if (queue() != NULL) {
+    GCTaskQueue::destroy(queue());
+    _queue = NULL;
+  }
+  delete _terminator[0];
+  delete _terminator[1];
+#endif
 }
 
 void GCTaskManager::print_task_time_stamps() {
@@ -479,12 +553,15 @@ void GCTaskManager::set_thread(uint which, GCTaskThread* value) {
 
 void GCTaskManager::add_task(GCTask* task) {
   assert(task != NULL, "shouldn't have null task");
+#ifndef REPLACE_MUTEX
   MutexLockerEx ml(monitor(), Mutex::_no_safepoint_check_flag);
+#endif
   if (TraceGCTaskManager) {
     tty->print_cr("GCTaskManager::add_task(" INTPTR_FORMAT " [%s])",
                   task, GCTask::Kind::to_string(task->kind()));
   }
   queue()->enqueue(task);
+#ifndef REPLACE_MUTEX
   // Notify with the lock held to avoid missed notifies.
   if (TraceGCTaskManager) {
     tty->print_cr("    GCTaskManager::add_task (%s)->notify_all",
@@ -492,15 +569,22 @@ void GCTaskManager::add_task(GCTask* task) {
   }
   (void) monitor()->notify_all();
   // Release monitor().
+#else
+  _futex++;
+  syscall(SYS_futex, futex_addr(), FUTEX_WAKE_PRIVATE, workers(), 0, 0, 0);
+#endif
 }
 
 void GCTaskManager::add_list(GCTaskQueue* list) {
   assert(list != NULL, "shouldn't have null task");
+#ifndef REPLACE_MUTEX
   MutexLockerEx ml(monitor(), Mutex::_no_safepoint_check_flag);
+#endif
   if (TraceGCTaskManager) {
     tty->print_cr("GCTaskManager::add_list(%u)", list->length());
   }
   queue()->enqueue(list);
+#ifndef REPLACE_MUTEX
   // Notify with the lock held to avoid missed notifies.
   if (TraceGCTaskManager) {
     tty->print_cr("    GCTaskManager::add_list (%s)->notify_all",
@@ -508,8 +592,73 @@ void GCTaskManager::add_list(GCTaskQueue* list) {
   }
   (void) monitor()->notify_all();
   // Release monitor().
+#else
+  _futex++;
+  syscall(SYS_futex, futex_addr(), FUTEX_WAKE_PRIVATE, workers(), 0, 0, 0);
+#endif
 }
 
+#ifdef REPLACE_MUTEX
+GCTask* GCTaskManager::get_task(uint which) {
+  GCTask* result = NULL;
+tryagain:
+  if (is_blocked()) {
+    // Wait while the queue is blocked
+    do {
+      if (TraceGCTaskManager) {
+        tty->print_cr("GCTaskManager::get_task(%u)"
+                    "  blocked: %s"
+                    "  empty: %s"
+                    "  release: %s",
+                    which,
+                    is_blocked() ? "true" : "false",
+                    queue()->is_empty() ? "true" : "false",
+                    should_release_resources(which) ? "true" : "false");
+      }
+      syscall(SYS_futex, futex_addr(), FUTEX_WAIT_PRIVATE,
+             ((GCTaskThread*)Thread::current())->futex_ts(), 0, 0, 0);
+      ((GCTaskThread*)Thread::current())->inc_futex_ts();
+    } while (is_blocked());
+  }
+
+  result = queue()->dequeue();
+  if (result) {
+    if (result->is_barrier_task()) {
+      assert(which != sentinel_worker(),
+             "blocker shouldn't be bogus");
+      set_blocking_worker(which);
+      OrderAccess::fence();
+    }
+    if (TraceGCTaskManager) {
+      tty->print_cr("GCTaskManager::get_task(%u) => " INTPTR_FORMAT " [%s]",
+                  which, result, GCTask::Kind::to_string(result->kind()));
+      tty->print_cr("     %s", result->name());
+    }
+  } else {
+    // The queue is empty.
+    if (should_release_resources(which)) {
+      return NoopGCTask::create();
+    }
+    if (TraceGCTaskManager) {
+      tty->print_cr("GCTaskManager::get_task(%u)"
+                    "  blocked: %s"
+                    "  empty: %s"
+                    "  release: %s",
+                    which,
+                    is_blocked() ? "true" : "false",
+                    queue()->is_empty() ? "true" : "false",
+                    should_release_resources(which) ? "true" : "false");
+    }
+    syscall(SYS_futex, futex_addr(), FUTEX_WAIT_PRIVATE,
+           ((GCTaskThread*)Thread::current())->futex_ts(), 0, 0, 0);
+    ((GCTaskThread*)Thread::current())->inc_futex_ts();
+    goto tryagain;
+  }
+
+  assert (result != NULL, "There must be a valid GCTask at this point!");
+  return result;
+}
+#else
 GCTask* GCTaskManager::get_task(uint which) {
   GCTask* result = NULL;
   // Grab the queue lock.
@@ -563,9 +712,12 @@ GCTask* GCTaskManager::get_task(uint which) {
   return result;
   // Release monitor().
 }
+#endif
 
 void GCTaskManager::note_completion(uint which) {
+#ifndef REPLACE_MUTEX
   MutexLockerEx ml(monitor(), Mutex::_no_safepoint_check_flag);
+#endif
   if (TraceGCTaskManager) {
     tty->print_cr("GCTaskManager::note_completion(%u)", which);
   }
@@ -575,6 +727,13 @@ void GCTaskManager::note_completion(uint which) {
            "blocker shouldn't be bogus");
     increment_barriers();
     set_unblocked();
+#ifdef REPLACE_MUTEX
+    _futex++;
+    syscall(SYS_futex, futex_addr(), FUTEX_WAKE_PRIVATE, workers(), 0, 0, 0);
+  }
+  assert(notify_done_closure() == NULL, "We dont support ndc thing in the lock-free implementation");
+  if (TraceGCTaskManager) {
+#else
   }
   increment_completed_tasks();
   uint active = decrement_busy_workers();
@@ -592,6 +751,7 @@ void GCTaskManager::note_completion(uint which) {
   if (TraceGCTaskManager) {
     tty->print_cr("    GCTaskManager::note_completion(%u) (%s)->notify_all",
                   which, monitor()->name());
+#endif
     tty->print_cr("  "
                   "  blocked: %s"
                   "  empty: %s"
@@ -609,19 +769,25 @@ void GCTaskManager::note_completion(uint which) {
                   barriers(),
                   emptied_queue());
   }
+#ifndef REPLACE_MUTEX
   // Tell everyone that a task has completed.
   (void) monitor()->notify_all();
   // Release monitor().
+#endif
 }
 
 uint GCTaskManager::increment_busy_workers() {
+#ifndef REPLACE_MUTEx
   assert(queue()->own_lock(), "don't own the lock");
+#endif
   _busy_workers += 1;
   return _busy_workers;
 }
 
 uint GCTaskManager::decrement_busy_workers() {
+#ifndef REPLACE_MUTEX
   assert(queue()->own_lock(), "don't own the lock");
+#endif
   _busy_workers -= 1;
   return _busy_workers;
 }
@@ -648,8 +814,10 @@ void GCTaskManager::execute_and_wait(GCTaskQueue* list) {
   list->enqueue(fin);
   add_list(list);
   fin->wait_for();
+#ifndef REPLACE_MUTEX
   // We have to release the barrier tasks!
   WaitForBarrierGCTask::destroy(fin);
+#endif
 }
 
 bool GCTaskManager::resource_flag(uint which) {
@@ -672,16 +840,24 @@ NoopGCTask* NoopGCTask::create() {
 }
 
 NoopGCTask* NoopGCTask::create_on_c_heap() {
+#ifdef REPLACE_MUTEX
+  NoopGCTask* result = new NoopGCTask(true);
+#else
   NoopGCTask* result = new(ResourceObj::C_HEAP) NoopGCTask(true);
+#endif
   return result;
 }
 
 void NoopGCTask::destroy(NoopGCTask* that) {
   if (that != NULL) {
+#ifndef REPLACE_MUTEX
     that->destruct();
     if (that->is_c_heap_obj()) {
       FreeHeap(that);
     }
+#else
+    delete that;
+#endif
   }
 }
 
@@ -701,12 +877,15 @@ void BarrierGCTask::do_it(GCTaskManager* manager, uint which) {
   //     whose constructor would grab the lock and come to the barrier,
   //     and whose destructor would release the lock,
   //     but that seems like too much mechanism for two lines of code.
+#ifndef REPLACE_MUTEX
   MutexLockerEx ml(manager->lock(), Mutex::_no_safepoint_check_flag);
+#endif
   do_it_internal(manager, which);
   // Release manager->lock().
 }
 
 void BarrierGCTask::do_it_internal(GCTaskManager* manager, uint which) {
+#ifndef REPLACE_MUTEX
   // Wait for this to be the only busy worker.
   assert(manager->monitor()->owned_by_self(), "don't own the lock");
   assert(manager->is_blocked(), "manager isn't blocked");
@@ -717,6 +896,7 @@ void BarrierGCTask::do_it_internal(GCTaskManager* manager, uint which) {
     }
     manager->monitor()->wait(Mutex::_no_safepoint_check_flag, 0);
   }
+#endif
 }
 
 void BarrierGCTask::destruct() {
@@ -729,7 +909,9 @@ void BarrierGCTask::destruct() {
 //
 
 void ReleasingBarrierGCTask::do_it(GCTaskManager* manager, uint which) {
+#ifndef REPLACE_MUTEX
   MutexLockerEx ml(manager->lock(), Mutex::_no_safepoint_check_flag);
+#endif
   do_it_internal(manager, which);
   manager->release_all_resources();
   // Release manager->lock().
@@ -745,7 +927,9 @@ void ReleasingBarrierGCTask::destruct() {
 //
 
 void NotifyingBarrierGCTask::do_it(GCTaskManager* manager, uint which) {
+#ifndef REPLACE_MUTEX
   MutexLockerEx ml(manager->lock(), Mutex::_no_safepoint_check_flag);
+#endif
   do_it_internal(manager, which);
   NotifyDoneClosure* ndc = notify_done_closure();
   if (ndc != NULL) {
@@ -773,20 +957,27 @@ WaitForBarrierGCTask* WaitForBarrierGCTask::create_on_c_heap() {
 }
 
 WaitForBarrierGCTask::WaitForBarrierGCTask(bool on_c_heap) :
+#ifdef REPLACE_MUTEX
+  _is_c_heap_obj(on_c_heap),
+  _futex(0),
+  BarrierGCTask(false) {
+#else
   _is_c_heap_obj(on_c_heap) {
   _monitor = MonitorSupply::reserve();
-  set_should_wait(true);
   if (TraceGCTaskManager) {
     tty->print_cr("[" INTPTR_FORMAT "]"
                   " WaitForBarrierGCTask::WaitForBarrierGCTask()"
                   "  monitor: " INTPTR_FORMAT,
                   this, monitor());
   }
+#endif
+  set_should_wait(true);
 }
 
 void WaitForBarrierGCTask::destroy(WaitForBarrierGCTask* that) {
   if (that != NULL) {
     if (TraceGCTaskManager) {
+#ifndef REPLACE_MUTEX
       tty->print_cr("[" INTPTR_FORMAT "]"
                     " WaitForBarrierGCTask::destroy()"
                     "  is_c_heap_obj: %s"
@@ -794,6 +985,7 @@ void WaitForBarrierGCTask::destroy(WaitForBarrierGCTask* that) {
                     that,
                     that->is_c_heap_obj() ? "true" : "false",
                     that->monitor());
+#endif
     }
     that->destruct();
     if (that->is_c_heap_obj()) {
@@ -803,6 +995,7 @@ void WaitForBarrierGCTask::destroy(WaitForBarrierGCTask* that) {
 }
 
 void WaitForBarrierGCTask::destruct() {
+#ifndef REPLACE_MUTEX
   assert(monitor() != NULL, "monitor should not be NULL");
   if (TraceGCTaskManager) {
     tty->print_cr("[" INTPTR_FORMAT "]"
@@ -817,9 +1010,11 @@ void WaitForBarrierGCTask::destruct() {
      MonitorSupply::release(monitor());
   }
   _monitor = (Monitor*) 0xDEAD000F;
+#endif
 }
 
 void WaitForBarrierGCTask::do_it(GCTaskManager* manager, uint which) {
+#ifndef REPLACE_MUTEX
   if (TraceGCTaskManager) {
     tty->print_cr("[" INTPTR_FORMAT "]"
                   " WaitForBarrierGCTask::do_it() waiting for idle"
@@ -835,7 +1030,12 @@ void WaitForBarrierGCTask::do_it(GCTaskManager* manager, uint which) {
   {
     // Then notify the waiter.
     MutexLockerEx ml(monitor(), Mutex::_no_safepoint_check_flag);
+#endif
     set_should_wait(false);
+#ifdef REPLACE_MUTEX
+    _futex++;
+    syscall(SYS_futex, futex_addr(), FUTEX_WAKE_PRIVATE, 1, 0, 0, 0);
+#else
     // Waiter doesn't miss the notify in the wait_for method
     // since it checks the flag after grabbing the monitor.
     if (TraceGCTaskManager) {
@@ -847,6 +1047,7 @@ void WaitForBarrierGCTask::do_it(GCTaskManager* manager, uint which) {
     monitor()->notify_all();
     // Release monitor().
   }
+#endif
 }
 
 void WaitForBarrierGCTask::wait_for() {
@@ -857,9 +1058,12 @@ void WaitForBarrierGCTask::wait_for() {
       this, should_wait() ? "true" : "false");
   }
   {
+#ifndef REPLACE_MUTEX
     // Grab the lock and check again.
     MutexLockerEx ml(monitor(), Mutex::_no_safepoint_check_flag);
+#endif
     while (should_wait()) {
+#ifndef REPLACE_MUTEX
       if (TraceGCTaskManager) {
         tty->print_cr("[" INTPTR_FORMAT "]"
                       " WaitForBarrierGCTask::wait_for()"
@@ -867,6 +1071,9 @@ void WaitForBarrierGCTask::wait_for() {
           this, monitor(), monitor()->name());
       }
       monitor()->wait(Mutex::_no_safepoint_check_flag, 0);
+#else
+      syscall(SYS_futex, futex_addr(), FUTEX_WAIT_PRIVATE, 0, 0, 0, 0);
+#endif
     }
     // Reset the flag in case someone reuses this task.
     set_should_wait(true);

@@ -28,6 +28,9 @@
 // Use this to mark code that needs to be cleaned up (for development only)
 #define NEEDS_CLEANUP
 
+// Use these macros for NUMA-aware GC
+#define REPLACE_MUTEX
+
 // Makes a string of the argument (which is not macro-expanded)
 #define STR(a)  #a
 
