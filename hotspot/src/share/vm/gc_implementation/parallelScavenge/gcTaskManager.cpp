@@ -777,7 +777,7 @@ void GCTaskManager::note_completion(uint which) {
 }
 
 uint GCTaskManager::increment_busy_workers() {
-#ifndef REPLACE_MUTEx
+#ifndef REPLACE_MUTEX
   assert(queue()->own_lock(), "don't own the lock");
 #endif
   _busy_workers += 1;
