@@ -89,8 +89,15 @@ class MutableNUMASpace : public MutableSpace {
     char* _last_page_scanned;
     char* last_page_scanned()            { return _last_page_scanned; }
     void set_last_page_scanned(char* p)  { _last_page_scanned = p;    }
+#ifdef YOUNGGEN_8TIMES
+    volatile size_t _cur_physical_size;
+#endif
    public:
-    LGRPSpace(int l, size_t alignment) : _lgrp_id(l), _last_page_scanned(NULL), _allocation_failed(false) {
+    LGRPSpace(int l, size_t alignment) : _lgrp_id(l), _last_page_scanned(NULL),
+#ifdef YOUNGGEN_8TIMES
+                                                      _cur_physical_size(0),
+#endif
+                                                      _allocation_failed(false) {
       _space = new MutableSpace(alignment);
       _alloc_rate = new AdaptiveWeightedAverage(NUMAChunkResizeWeight);
     }
@@ -129,6 +136,12 @@ class MutableNUMASpace : public MutableSpace {
       alloc_rate()->sample(alloc_rate_sample);
     }
 
+#ifdef YOUNGGEN_8TIMES
+    size_t cur_phys_size()                         { return _cur_physical_size;   }
+    void set_cur_phys_size(size_t s)               { _cur_physical_size = s;      }
+    volatile size_t* cur_phys_size_addr()          { return &_cur_physical_size;  }
+#endif
+
     MemRegion invalid_region() const                { return _invalid_region;      }
     void set_invalid_region(MemRegion r)            { _invalid_region = r;         }
     int lgrp_id() const                             { return _lgrp_id;             }
@@ -149,6 +162,15 @@ class MutableNUMASpace : public MutableSpace {
   void set_page_size(size_t psz)                     { _page_size = psz;          }
   size_t page_size() const                           { return _page_size;         }
 
+#ifdef YOUNGGEN_8TIMES
+  volatile size_t _cur_physical_size;
+  size_t          _default_chunk_size;
+  size_t          _phys_chunk_threshold;
+  size_t cur_phys_size() const                      { return _cur_physical_size; }
+  void set_cur_phys_size(size_t v)                  { _cur_physical_size = v;    }
+  volatile size_t* cur_phys_size_addr()             { return &_cur_physical_size;}
+#endif
+
   unsigned adaptation_cycles()                       { return _adaptation_cycles; }
   void set_adaptation_cycles(int v)                  { _adaptation_cycles = v;    }
 
@@ -164,8 +186,10 @@ class MutableNUMASpace : public MutableSpace {
   bool update_layout(bool force);
   // Bias region towards the lgrp.
   void bias_region(MemRegion mr, int lgrp_id);
+#ifndef YOUNGGEN_8TIMES
   // Free pages in a given region.
   void free_region(MemRegion mr);
+#endif
   // Get current chunk size.
   size_t current_chunk_size(int i);
   // Get default chunk size (equally divide the space).
@@ -217,6 +241,12 @@ class MutableNUMASpace : public MutableSpace {
   virtual size_t capacity_in_words(Thread* thr) const;
   virtual size_t tlab_capacity(Thread* thr) const;
   virtual size_t unsafe_max_tlab_alloc(Thread* thr) const;
+
+#ifdef YOUNGGEN_8TIMES
+  //Iteration
+  virtual void oop_iterate(OopClosure* cl);
+  virtual void object_iterate(ObjectClosure* cl);
+#endif
 
   // Allocation (return NULL if full)
   virtual HeapWord* allocate(size_t word_size);

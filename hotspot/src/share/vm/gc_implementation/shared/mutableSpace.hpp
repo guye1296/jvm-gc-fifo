@@ -57,7 +57,9 @@ class MutableSpace: public ImmutableSpace {
 
   void numa_setup_pages(MemRegion mr, bool clear_space);
   void pretouch_pages(MemRegion mr);
-
+#ifdef YOUNGGEN_8TIMES
+  void free_region(MemRegion mr);
+#endif
   void set_last_setup_region(MemRegion mr) { _last_setup_region = mr;   }
   MemRegion last_setup_region() const      { return _last_setup_region; }
 
@@ -133,8 +135,13 @@ class MutableSpace: public ImmutableSpace {
   bool cas_deallocate(HeapWord *obj, size_t size);
 
   // Iteration.
+#ifdef YOUNGGEN_8TIMES
+  virtual void oop_iterate(OopClosure* cl);
+  virtual void object_iterate(ObjectClosure* cl);
+#else
   void oop_iterate(OopClosure* cl);
   void object_iterate(ObjectClosure* cl);
+#endif
 
   // Debugging
   virtual void print() const;

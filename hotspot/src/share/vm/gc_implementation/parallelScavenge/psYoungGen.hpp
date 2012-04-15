@@ -70,8 +70,13 @@ class PSYoungGen : public CHeapObj {
   // Space boundary helper
   void set_space_boundaries(size_t eden_size, size_t survivor_size);
 
+#ifdef YOUNGGEN_8TIMES
+  virtual bool resize_generation(size_t eden_size, size_t to_size, size_t from_size);
+  virtual void resize_spaces(size_t requested_eden_size, size_t requested_to_size, size_t requested_from_size);
+#else
   virtual bool resize_generation(size_t eden_size, size_t survivor_size);
   virtual void resize_spaces(size_t eden_size, size_t survivor_size);
+#endif
 
   // Adjust the spaces to be consistent with the virtual space.
   void post_resize();
@@ -134,7 +139,11 @@ class PSYoungGen : public CHeapObj {
   // NOTE:  "eden_size" and "survivor_size" are suggestions only. Current
   //        heap layout (particularly, live objects in from space) might
   //        not allow us to use these values.
+#ifdef YOUNGGEN_8TIMES
+  void resize(size_t eden_size, size_t to_size);
+#else
   void resize(size_t eden_size, size_t survivor_size);
+#endif
 
   // Size info
   size_t capacity_in_bytes() const;

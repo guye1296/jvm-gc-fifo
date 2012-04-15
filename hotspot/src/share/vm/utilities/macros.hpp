@@ -30,6 +30,8 @@
 
 // Use these macros for NUMA-aware GC
 #define REPLACE_MUTEX
+#define YOUNGGEN_8TIMES
+#define THREAD_AFFINITY
 
 // Makes a string of the argument (which is not macro-expanded)
 #define STR(a)  #a

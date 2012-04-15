@@ -2568,6 +2568,10 @@ bool os::Linux::libnuma_init() {
   if (sched_getcpu() != -1) { // Does it work?
     void *handle = dlopen("libnuma.so.1", RTLD_LAZY);
     if (handle != NULL) {
+#ifdef YOUNGGEN_8TIMES
+      set_numa_set_bind_policy(CAST_TO_FN_PTR(numa_set_bind_policy_func_t,
+                                              libnuma_dlsym(handle, "numa_set_bind_policy")));
+#endif
       set_numa_node_to_cpus(CAST_TO_FN_PTR(numa_node_to_cpus_func_t,
                                            libnuma_dlsym(handle, "numa_node_to_cpus")));
       set_numa_max_node(CAST_TO_FN_PTR(numa_max_node_func_t,
@@ -2581,6 +2585,9 @@ bool os::Linux::libnuma_init() {
 
 
       if (numa_available() != -1) {
+#ifdef YOUNGGEN_8TIMES
+        numa_set_bind_policy(0); //set it to use MPOL_PREFERRED policy
+#endif
         set_numa_all_nodes((unsigned long*)libnuma_dlsym(handle, "numa_all_nodes"));
         // Create a cpu -> node mapping
         _cpu_to_node = new (ResourceObj::C_HEAP) GrowableArray<int>(0, true);
@@ -2638,6 +2645,9 @@ int os::Linux::get_node_by_cpu(int cpu_id) {
 }
 
 GrowableArray<int>* os::Linux::_cpu_to_node;
+#ifdef YOUNGGEN_8TIMES
+os::Linux::numa_set_bind_policy_func_t os::Linux::_numa_set_bind_policy;
+#endif
 os::Linux::sched_getcpu_func_t os::Linux::_sched_getcpu;
 os::Linux::numa_node_to_cpus_func_t os::Linux::_numa_node_to_cpus;
 os::Linux::numa_max_node_func_t os::Linux::_numa_max_node;
@@ -4260,14 +4270,87 @@ int os::active_processor_count() {
   return online_cpus;
 }
 
+#ifdef THREAD_AFFINITY
+static bool get_cpu_node_map(uint *num_cpus, uint *id_length, GrowableArray<uint>***id_array) {
+        cpu_set_t cpu_set;
+        CPU_ZERO(&cpu_set);
+        int result = sched_getaffinity(getpid(), sizeof(cpu_set_t), &cpu_set);
+       if (result) {
+               return false;
+       }
+       *num_cpus = CPU_COUNT(&cpu_set);
+       *id_length = os::numa_get_groups_num();
+       *id_array = NEW_C_HEAP_ARRAY(GrowableArray<uint>*, *id_length);
+
+       for (result = 0; (unsigned int)result < *id_length; result++) {
+               (*id_array)[result] = new (ResourceObj::C_HEAP) GrowableArray<uint>(0, true);
+       }
+
+        for (uint i=0, j=0; i < *num_cpus; j++) {
+                if (CPU_ISSET(j, &cpu_set)){
+                       i++;
+                       if ((result = os::Linux::get_node_by_cpu(j)) >= 0) {
+                               (*id_array)[result]->append(j);
+                       }
+                }
+        }
+       return true;
+}
+
+static bool assign_distribution(GrowableArray<uint>** id_array,
+                                uint           id_length,
+                                uint*          distribution,
+                                uint           distribution_length) {
+       uint i = 0;
+       for(int j = 0; i < distribution_length; j = (j+1) % id_length) {
+               if (id_array[j]->is_nonempty()) {
+                       distribution[i++] = id_array[j]->pop();
+               }
+       }
+       return true;
+}
+#endif
+
 bool os::distribute_processes(uint length, uint* distribution) {
+#ifndef THREAD_AFFINITY
   // Not yet implemented.
   return false;
+#else
+  bool result = false;
+  uint id_length = 0;
+  uint num_cpus = 0;
+  GrowableArray<uint> **id_array = NULL;
+  result = get_cpu_node_map( &num_cpus, &id_length, &id_array);
+  if (result == true) {
+    if (num_cpus >= length) {
+      result = assign_distribution(id_array, id_length, distribution, length);
+    } else {
+      result = false;
+    }
+  }
+  if (id_array != NULL) {
+    for(num_cpus = 0; num_cpus < id_length; num_cpus++) {
+       delete id_array[num_cpus];
+    }
+    FREE_C_HEAP_ARRAY(GrowableArray<uint>*, id_array);
+  }
+  return result;
+#endif
 }
 
 bool os::bind_to_processor(uint processor_id) {
+#ifndef THREAD_AFFINITY
   // Not yet implemented.
   return false;
+#else
+  if (processor_id >= (uint) active_processor_count()) {
+       return false;
+  }
+  cpu_set_t cpu_set;
+  CPU_ZERO(&cpu_set);
+  CPU_SET(processor_id, &cpu_set);
+  return sched_setaffinity(0, sizeof(cpu_set_t), &cpu_set) == 0;
+#endif
 }
 
 ///

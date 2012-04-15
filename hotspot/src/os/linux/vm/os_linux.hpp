@@ -241,6 +241,9 @@ class Linux {
   };
 
 private:
+#ifdef YOUNGGEN_8TIMES
+  typedef void (*numa_set_bind_policy_func_t)(int strict);
+#endif
   typedef int (*sched_getcpu_func_t)(void);
   typedef int (*numa_node_to_cpus_func_t)(int node, unsigned long *buffer, int bufferlen);
   typedef int (*numa_max_node_func_t)(void);
@@ -256,6 +259,10 @@ private:
   static numa_interleave_memory_func_t _numa_interleave_memory;
   static unsigned long* _numa_all_nodes;
 
+#ifdef YOUNGGEN_8TIMES
+  static numa_set_bind_policy_func_t _numa_set_bind_policy;
+  static void set_numa_set_bind_policy(numa_set_bind_policy_func_t func) { _numa_set_bind_policy = func; } 
+#endif
   static void set_sched_getcpu(sched_getcpu_func_t func) { _sched_getcpu = func; }
   static void set_numa_node_to_cpus(numa_node_to_cpus_func_t func) { _numa_node_to_cpus = func; }
   static void set_numa_max_node(numa_max_node_func_t func) { _numa_max_node = func; }
@@ -264,6 +271,13 @@ private:
   static void set_numa_interleave_memory(numa_interleave_memory_func_t func) { _numa_interleave_memory = func; }
   static void set_numa_all_nodes(unsigned long* ptr) { _numa_all_nodes = ptr; }
 public:
+#ifdef YOUNGGEN_8TIMES
+  static void numa_set_bind_policy(int strict) {
+    if (_numa_set_bind_policy != NULL) {
+      _numa_set_bind_policy(strict);
+    }
+  }
+#endif
   static int sched_getcpu()  { return _sched_getcpu != NULL ? _sched_getcpu() : -1; }
   static int numa_node_to_cpus(int node, unsigned long *buffer, int bufferlen) {
     return _numa_node_to_cpus != NULL ? _numa_node_to_cpus(node, buffer, bufferlen) : -1;

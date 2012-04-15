@@ -73,12 +73,21 @@ void PSYoungGen::initialize_work() {
 
   if (UseNUMA) {
     _eden_space = new MutableNUMASpace(virtual_space()->alignment());
+#ifdef YOUNGGEN_8TIMES
+    _from_space = new MutableNUMASpace(virtual_space()->alignment());
+    _to_space   = new MutableNUMASpace(virtual_space()->alignment());
+#endif
   } else {
     _eden_space = new MutableSpace(virtual_space()->alignment());
+#ifdef YOUNGGEN_8TIMES
+    _from_space = new MutableSpace(virtual_space()->alignment());
+    _to_space   = new MutableSpace(virtual_space()->alignment());
+#endif
   }
+#ifndef YOUNGGEN_8TIMES
   _from_space = new MutableSpace(virtual_space()->alignment());
   _to_space   = new MutableSpace(virtual_space()->alignment());
-
+#endif
   if (_eden_space == NULL || _from_space == NULL || _to_space == NULL) {
     vm_exit_during_initialization("Could not allocate a young gen space");
   }
@@ -258,13 +267,43 @@ void PSYoungGen::space_invariants() {
 }
 #endif
 
+#ifdef YOUNGGEN_8TIMES
+void PSYoungGen::resize(size_t eden_size, size_t to_size) {
+  size_t from_size;
+  if (UseNUMA) {
+  //Lokesh: We cannot resize from space as it contains live objects.
+  //Therefore, we need to send the exact size of from space to all 
+  //functions below. survivor_size has been renamed as to_space and
+  //from_size is computed in the next line.
+       from_size = from_space()->capacity_in_bytes();
+  }
+  else {
+       from_size = to_size;
+  }
+  // Resize the generation if needed. If the generation resize
+  // reports false, do not attempt to resize the spaces.
+  if (resize_generation(eden_size, to_size, from_size)) {
+    // Then we lay out the spaces inside the generation
+    resize_spaces(eden_size, to_size, from_size);
+    space_invariants();
+
+    if (PrintAdaptiveSizePolicy && Verbose) {
+      gclog_or_tty->print_cr("Young generation size: "
+        "desired eden: " SIZE_FORMAT " survivor: " SIZE_FORMAT
+        " used: " SIZE_FORMAT " capacity: " SIZE_FORMAT
+        " gen limits: " SIZE_FORMAT " / " SIZE_FORMAT,
+        eden_size, to_size, used_in_bytes(), capacity_in_bytes(),
+        _max_gen_size, min_gen_size());
+    }
+  }
+}
+#else
 void PSYoungGen::resize(size_t eden_size, size_t survivor_size) {
   // Resize the generation if needed. If the generation resize
   // reports false, do not attempt to resize the spaces.
   if (resize_generation(eden_size, survivor_size)) {
     // Then we lay out the spaces inside the generation
     resize_spaces(eden_size, survivor_size);
-
     space_invariants();
 
     if (PrintAdaptiveSizePolicy && Verbose) {
@@ -277,9 +316,12 @@ void PSYoungGen::resize(size_t eden_size, size_t survivor_size) {
     }
   }
 }
-
-
+#endif
+#ifdef YOUNGGEN_8TIMES
+bool PSYoungGen::resize_generation(size_t eden_size, size_t to_size, size_t from_size) {
+#else
 bool PSYoungGen::resize_generation(size_t eden_size, size_t survivor_size) {
+#endif
   const size_t alignment = virtual_space()->alignment();
   size_t orig_size = virtual_space()->committed_size();
   bool size_changed = false;
@@ -294,7 +336,11 @@ bool PSYoungGen::resize_generation(size_t eden_size, size_t survivor_size) {
 
   // Adjust new generation size
   const size_t eden_plus_survivors =
+#ifdef YOUNGGEN_8TIMES
+          align_size_up(eden_size + to_size + from_size, alignment);
+#else
           align_size_up(eden_size + 2 * survivor_size, alignment);
+#endif
   size_t desired_size = MAX2(MIN2(eden_plus_survivors, max_size()),
                              min_gen_size());
   assert(desired_size <= max_size(), "just checking");
@@ -435,10 +481,16 @@ void PSYoungGen::mangle_survivors(MutableSpace* s1,
 #endif // NOT PRODUCT
 
 void PSYoungGen::resize_spaces(size_t requested_eden_size,
+#ifdef YOUNGGEN_8TIMES
+                               size_t requested_to_size,
+                               size_t requested_from_size) {
+  assert(requested_eden_size > 0  && requested_to_size > 0 && requested_from_size > 0,
+#else
                                size_t requested_survivor_size) {
-  assert(UseAdaptiveSizePolicy, "sanity check");
   assert(requested_eden_size > 0  && requested_survivor_size > 0,
+#endif
          "just checking");
+  assert(UseAdaptiveSizePolicy, "sanity check");
 
   // We require eden and to space to be empty
   if ((!eden_space()->is_empty()) || (!to_space()->is_empty())) {
@@ -449,7 +501,11 @@ void PSYoungGen::resize_spaces(size_t requested_eden_size,
     gclog_or_tty->print_cr("PSYoungGen::resize_spaces(requested_eden_size: "
                   SIZE_FORMAT
                   ", requested_survivor_size: " SIZE_FORMAT ")",
+#ifndef YOUNGGEN_8TIMES
                   requested_eden_size, requested_survivor_size);
+#else
+                  requested_eden_size, requested_to_size);
+#endif
     gclog_or_tty->print_cr("    eden: [" PTR_FORMAT ".." PTR_FORMAT ") "
                   SIZE_FORMAT,
                   eden_space()->bottom(),
@@ -474,8 +530,13 @@ void PSYoungGen::resize_spaces(size_t requested_eden_size,
   }
 
   // There's nothing to do if the new sizes are the same as the current
+#ifdef YOUNGGEN_8TIMES 
+  if (requested_to_size == to_space()->capacity_in_bytes() &&
+      requested_from_size == from_space()->capacity_in_bytes() &&
+#else
   if (requested_survivor_size == to_space()->capacity_in_bytes() &&
       requested_survivor_size == from_space()->capacity_in_bytes() &&
+#endif
       requested_eden_size == eden_space()->capacity_in_bytes()) {
     if (PrintAdaptiveSizePolicy && Verbose) {
       gclog_or_tty->print_cr("    capacities are the right sizes, returning");
@@ -493,7 +554,11 @@ void PSYoungGen::resize_spaces(size_t requested_eden_size,
   ParallelScavengeHeap* heap = (ParallelScavengeHeap*)Universe::heap();
   const size_t alignment = heap->intra_heap_alignment();
   const bool maintain_minimum =
+#ifndef YOUNGGEN_8TIMES
     (requested_eden_size + 2 * requested_survivor_size) <= min_gen_size();
+#else
+    (requested_eden_size + requested_from_size + requested_to_size) <= min_gen_size();
+#endif
 
   bool eden_from_to_order = from_start < to_start;
   // Check whether from space is below to space
@@ -537,9 +602,14 @@ void PSYoungGen::resize_spaces(size_t requested_eden_size,
 
     // First calculate an optimal to-space
     to_end   = (char*)virtual_space()->high();
+#ifndef YOUNGGEN_8TIMES
     to_start = (char*)pointer_delta(to_end, (char*)requested_survivor_size,
                                     sizeof(char));
-
+#else
+    to_start = (char*)pointer_delta(to_end, (char*)requested_to_size,
+                                    sizeof(char));
+    if (!UseNUMA) {
+#endif
     // Does the optimal to-space overlap from-space?
     if (to_start < (char*)from_space()->end()) {
       assert(heap->kind() == CollectedHeap::ParallelScavengeHeap, "Sanity");
@@ -558,11 +628,15 @@ void PSYoungGen::resize_spaces(size_t requested_eden_size,
       assert(from_end > from_start, "addition overflow or from_size problem");
 
       guarantee(from_end <= (char*)from_space()->end(), "from_end moved to the right");
-
+#ifdef YOUNGGEN_8TIMES
+      }
+    }
+#endif
       // Now update to_start with the new from_end
       to_start = MAX2(from_end, to_start);
+#ifndef YOUNGGEN_8TIMES
     }
-
+#endif
     guarantee(to_start != to_end, "to space is zero sized");
 
     if (PrintAdaptiveSizePolicy && Verbose) {
@@ -592,11 +666,39 @@ void PSYoungGen::resize_spaces(size_t requested_eden_size,
     // to space as if we were able to resize from space, even though from
     // space is not modified.
     // Giving eden priority was tried and gave poorer performance.
+#ifdef YOUNGGEN_8TIMES
+   if (requested_to_size <= pointer_delta(virtual_space()->high(), from_end, sizeof(char))) {
+     //Lokesh: We are switching the locations of To and From spaces.
+     to_end = (char*)virtual_space()->high();
+     to_start = (char*)pointer_delta(to_end, (char*)requested_to_size,
+                                     sizeof(char));
+     to_start = MAX2(to_start, from_end);
+     size_t eden_size;
+     if (maintain_minimum) {
+       eden_size = pointer_delta(from_start, eden_start, sizeof(char));
+     } else {
+       eden_size = MIN2(requested_eden_size,
+                       pointer_delta(from_start, eden_start, sizeof(char)));
+     }
+     eden_end = eden_start + eden_size;
+     assert(eden_end >= eden_start, "addition overflowed");
+     eden_end = MIN2(MAX2(eden_end, eden_start + alignment), from_start);
+
+   } else {
+#endif
     to_end   = (char*)pointer_delta(virtual_space()->high(),
+#ifdef YOUNGGEN_8TIMES
+                                    (char*)requested_to_size,
+#else
                                     (char*)requested_survivor_size,
+#endif
                                     sizeof(char));
     to_end   = MIN2(to_end, from_start);
+#ifdef YOUNGGEN_8TIMES
+    to_start = (char*)pointer_delta(to_end, (char*)requested_to_size,
+#else
     to_start = (char*)pointer_delta(to_end, (char*)requested_survivor_size,
+#endif
                                     sizeof(char));
     // if the space sizes are to be increased by several times then
     // 'to_start' will point beyond the young generation. In this case
@@ -619,9 +721,15 @@ void PSYoungGen::resize_spaces(size_t requested_eden_size,
     // to_start = MAX2(to_start, eden_end);
 
     // Don't let eden shrink down to 0 or less.
+#ifndef YOUNGGEN_8TIMES
     eden_end = MAX2(eden_end, eden_start + alignment);
+#else
+    eden_end = MIN2(MAX2(eden_end, eden_start + alignment), from_start);
+#endif
     to_start = MAX2(to_start, eden_end);
-
+#ifdef YOUNGGEN_8TIMES
+  }
+#endif
     if (PrintAdaptiveSizePolicy && Verbose) {
       gclog_or_tty->print_cr("    [eden_start .. eden_end): "
                     "[" PTR_FORMAT " .. " PTR_FORMAT ") " SIZE_FORMAT,
@@ -667,13 +775,17 @@ void PSYoungGen::resize_spaces(size_t requested_eden_size,
     // the wrong memory (i.e., don't want the GC thread to first
     // touch the memory).  The survivor spaces are not numa
     // spaces and are mangled.
+#ifndef YOUNGGEN_8TIMES
     if (UseNUMA) {
+#endif
       if (eden_from_to_order) {
         mangle_survivors(from_space(), fromMR, to_space(), toMR);
       } else {
         mangle_survivors(to_space(), toMR, from_space(), fromMR);
       }
+#ifndef YOUNGGEN_8TIMES
     }
+#endif
 
     // If not mangling the spaces, do some checking to verify that
     // the spaces are already mangled.
@@ -697,6 +809,9 @@ void PSYoungGen::resize_spaces(size_t requested_eden_size,
     to_space()->initialize(toMR,
                            SpaceDecorator::Clear,
                            SpaceDecorator::DontMangle);
+#ifdef YOUNGGEN_8TIMES
+  if (!UseNUMA)
+#endif
   from_space()->initialize(fromMR,
                            SpaceDecorator::DontClear,
                            SpaceDecorator::DontMangle);
@@ -841,10 +956,16 @@ size_t PSYoungGen::available_to_live() {
   ParallelScavengeHeap* heap = (ParallelScavengeHeap*)Universe::heap();
   const size_t space_alignment = heap->intra_heap_alignment();
   const size_t gen_alignment = heap->young_gen_alignment();
-
+#ifdef YOUNGGEN_8TIMES
+  bool is_from = false;
+#endif
   MutableSpace* space_shrinking = NULL;
   if (from_space()->end() > to_space()->end()) {
     space_shrinking = from_space();
+#ifdef YOUNGGEN_8TIMES
+    if (UseNUMA) //We don't want from space to shrink in NUMA case
+      is_from = true;
+#endif
   } else {
     space_shrinking = to_space();
   }
@@ -862,6 +983,9 @@ size_t PSYoungGen::available_to_live() {
       "Space is too small");
     delta_in_survivor = space_shrinking->capacity_in_bytes() - space_alignment;
   } else {
+#ifdef YOUNGGEN_8TIMES
+  if(!is_from)
+#endif
     delta_in_survivor = pointer_delta(space_shrinking->end(),
                                       space_shrinking->top(),
                                       sizeof(char));
@@ -905,6 +1029,13 @@ void PSYoungGen::reset_survivors_after_shrink() {
   // Was there a shrink of the survivor space?
   if (new_end < space_shrinking->end()) {
     MemRegion mr(space_shrinking->bottom(), new_end);
+#ifdef YOUNGGEN_8TIMES
+  if (UseNUMA)
+    space_shrinking->initialize(mr,
+                                SpaceDecorator::Clear,
+                                SpaceDecorator::Mangle);
+  else
+#endif
     space_shrinking->initialize(mr,
                                 SpaceDecorator::DontClear,
                                 SpaceDecorator::Mangle);

@@ -341,6 +341,19 @@ void GenCollectorPolicy::initialize_size_info() {
     set_min_gen0_size(max_new_size);
     set_initial_gen0_size(max_new_size);
     set_max_gen0_size(max_new_size);
+#ifdef YOUNGGEN_8TIMES
+    if (UseNUMA) {
+      set_initial_heap_byte_size(initial_heap_byte_size() + max_new_size * (os::numa_get_groups_num() - 1));
+      set_initial_heap_byte_size(align_size_up(_initial_heap_byte_size,
+                                           min_alignment()));
+      set_initial_gen0_size(max_new_size * os::numa_get_groups_num());
+      set_max_heap_byte_size(max_heap_byte_size() + max_new_size * (os::numa_get_groups_num() - 1));
+      set_max_heap_byte_size(align_size_up(_max_heap_byte_size, max_alignment()));
+      set_max_gen0_size(max_new_size * os::numa_get_groups_num());
+      MaxHeapSize = max_heap_byte_size();
+      InitialHeapSize = initial_heap_byte_size();
+    }
+#endif
   } else {
     size_t desired_new_size = 0;
     if (!FLAG_IS_DEFAULT(NewSize)) {
@@ -369,8 +382,26 @@ void GenCollectorPolicy::initialize_size_info() {
     }
 
     assert(_min_gen0_size > 0, "Sanity check");
+#ifndef YOUNGGEN_8TIMES
     set_initial_gen0_size(desired_new_size);
     set_max_gen0_size(max_new_size);
+#else
+    if (UseNUMA) {
+      set_initial_heap_byte_size(initial_heap_byte_size() + desired_new_size * (os::numa_get_groups_num() - 1));
+      set_initial_heap_byte_size(align_size_up(_initial_heap_byte_size,
+                                           min_alignment()));
+      set_initial_gen0_size(desired_new_size * os::numa_get_groups_num());
+      set_max_heap_byte_size(max_heap_byte_size() + max_new_size * (os::numa_get_groups_num() - 1));
+      set_max_heap_byte_size(align_size_up(_max_heap_byte_size, max_alignment()));
+      set_max_gen0_size(max_new_size * os::numa_get_groups_num());
+      MaxHeapSize = max_heap_byte_size();
+      InitialHeapSize = initial_heap_byte_size();
+    }
+    else {
+      set_initial_gen0_size(desired_new_size);
+      set_max_gen0_size(max_new_size);
+    }
+#endif
 
     // At this point the desirable initial and minimum sizes have been
     // determined without regard to the maximum sizes.

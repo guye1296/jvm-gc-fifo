@@ -44,6 +44,10 @@ MutableNUMASpace::MutableNUMASpace(size_t alignment) : MutableSpace(alignment) {
   _page_size = os::vm_page_size();
   _adaptation_cycles = 0;
   _samples_count = 0;
+#ifdef YOUNGGEN_8TIMES
+  _cur_physical_size = 0;
+  _phys_chunk_threshold = 0;
+#endif
   update_layout(true);
 }
 
@@ -285,6 +289,7 @@ void MutableNUMASpace::bias_region(MemRegion mr, int lgrp_id) {
   }
 }
 
+#ifndef YOUNGGEN_8TIMES
 // Free all pages in the region.
 void MutableNUMASpace::free_region(MemRegion mr) {
   HeapWord *start = (HeapWord*)round_to((intptr_t)mr.start(), page_size());
@@ -297,6 +302,7 @@ void MutableNUMASpace::free_region(MemRegion mr) {
     os::free_memory((char*)aligned_region.start(), aligned_region.byte_size());
   }
 }
+#endif
 
 // Update space layout. Perform adaptation.
 void MutableNUMASpace::update() {
@@ -683,6 +689,11 @@ void MutableNUMASpace::initialize(MemRegion mr,
 
     set_adaptation_cycles(samples_count());
   }
+#ifdef YOUNGGEN_8TIMES
+  _default_chunk_size = default_chunk_size();
+  _phys_chunk_threshold = (_default_chunk_size / os::numa_get_groups_num()) >> 2;
+  _default_chunk_size -= (_phys_chunk_threshold * os::numa_get_groups_num()) >> 1;
+#endif
 }
 
 // Set the top of the whole space.
@@ -733,13 +744,44 @@ void MutableNUMASpace::set_top(HeapWord* value) {
 
 void MutableNUMASpace::clear(bool mangle_space) {
   MutableSpace::set_top(bottom());
+#ifdef YOUNGGEN_8TIMES
+  set_cur_phys_size(0); // Lokesh: Actual physical size is set to 0 on clear
+#endif
   for (int i = 0; i < lgrp_spaces()->length(); i++) {
     // Never mangle NUMA spaces because the mangling will
     // bind the memory to a possibly unwanted lgroup.
+#ifdef YOUNGGEN_8TIMES
+    lgrp_spaces()->at(i)->set_cur_phys_size(0);
+#endif
     lgrp_spaces()->at(i)->space()->clear(SpaceDecorator::DontMangle);
   }
 }
+#ifdef YOUNGGEN_8TIMES 
+void MutableNUMASpace::oop_iterate(OopClosure* cl) {
+  
+  for (int i = 0; i < lgrp_spaces()->length(); i++) {
+    MutableSpace *s = lgrp_spaces()->at(i)->space();
+    HeapWord* obj_addr = s->bottom();
+    HeapWord* t = s->top();
+    // Could call objects iterate, but this is easier.
+    while (obj_addr < t) {
+       obj_addr += oop(obj_addr)->oop_iterate(cl);
+    }
+  }
+}
 
+void MutableNUMASpace::object_iterate(ObjectClosure* cl) {
+
+  for (int i = 0; i < lgrp_spaces()->length(); i++) {
+    MutableSpace *s = lgrp_spaces()->at(i)->space();
+    HeapWord* p = s->bottom();
+    while (p < s->top()) {
+      cl->do_object(oop(p));
+      p += oop(p)->size();
+    }
+  }
+}
+#endif
 /*
    Linux supports static memory binding, therefore the most part of the
    logic dealing with the possible invalid page allocation is effectively
@@ -769,8 +811,23 @@ HeapWord* MutableNUMASpace::allocate(size_t size) {
 
   LGRPSpace* ls = lgrp_spaces()->at(i);
   MutableSpace *s = ls->space();
+#ifndef YOUNGGEN_8TIMES
   HeapWord *p = s->allocate(size);
-
+#else
+  HeapWord *p = NULL;
+  if (cur_phys_size() >= (_default_chunk_size >> LogHeapWordSize)) {
+       goto fail;
+  }
+  size_t phys_size;
+  if ((phys_size = ls->cur_phys_size()) >= (_phys_chunk_threshold >> LogHeapWordSize)) {
+       ls->set_cur_phys_size(0);
+        set_cur_phys_size(cur_phys_size() + phys_size);
+       if (cur_phys_size() >= (_default_chunk_size >> LogHeapWordSize)) {
+               goto fail;
+       }
+  }
+  p = s->allocate(size);
+#endif
   if (p != NULL) {
     size_t remainder = s->free_in_words();
     if (remainder < CollectedHeap::min_fill_size() && remainder > 0) {
@@ -779,6 +836,9 @@ HeapWord* MutableNUMASpace::allocate(size_t size) {
     }
   }
   if (p != NULL) {
+#ifdef YOUNGGEN_8TIMES
+    ls->set_cur_phys_size(ls->cur_phys_size() + size);
+#endif
     if (top() < s->top()) { // Keep _top updated.
       MutableSpace::set_top(s->top());
     }
@@ -789,6 +849,9 @@ HeapWord* MutableNUMASpace::allocate(size_t size) {
       *(int*)i = 0;
     }
   }
+#ifdef YOUNGGEN_8TIMES
+fail:
+#endif
   if (p == NULL) {
     ls->set_allocation_failed();
   }
@@ -812,7 +875,26 @@ HeapWord* MutableNUMASpace::cas_allocate(size_t size) {
   }
   LGRPSpace *ls = lgrp_spaces()->at(i);
   MutableSpace *s = ls->space();
+#ifndef YOUNGGEN_8TIMES
   HeapWord *p = s->cas_allocate(size);
+#else
+  HeapWord *p = NULL;
+  if (cur_phys_size() >= (_default_chunk_size >> LogHeapWordSize)) {
+       goto out;
+  }
+  size_t phys_size;
+  while ((phys_size = ls->cur_phys_size()) >= (_phys_chunk_threshold >> LogHeapWordSize)) {
+       if (Atomic::cmpxchg_ptr(0, ls->cur_phys_size_addr(), (void*)phys_size) != (void*)phys_size) {
+               continue;
+       }
+       Atomic::add_ptr(phys_size, cur_phys_size_addr());
+       if (cur_phys_size() >= (_default_chunk_size >> LogHeapWordSize)) {
+               goto out;
+       }
+       break;
+  }
+  p = s->cas_allocate(size);
+#endif
   if (p != NULL) {
     size_t remainder = pointer_delta(s->end(), p + size);
     if (remainder < CollectedHeap::min_fill_size() && remainder > 0) {
@@ -826,6 +908,9 @@ HeapWord* MutableNUMASpace::cas_allocate(size_t size) {
     }
   }
   if (p != NULL) {
+#ifdef YOUNGGEN_8TIMES 
+    Atomic::add_ptr(size, ls->cur_phys_size_addr());
+#endif
     HeapWord* cur_top, *cur_chunk_top = p + size;
     while ((cur_top = top()) < cur_chunk_top) { // Keep _top updated.
       if (Atomic::cmpxchg_ptr(cur_chunk_top, top_addr(), cur_top) == cur_top) {
@@ -840,6 +925,9 @@ HeapWord* MutableNUMASpace::cas_allocate(size_t size) {
       *(int*)i = 0;
     }
   }
+#ifdef YOUNGGEN_8TIMES
+out:
+#endif
   if (p == NULL) {
     ls->set_allocation_failed();
   }
