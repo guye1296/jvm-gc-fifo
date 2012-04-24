@@ -603,7 +603,11 @@ void GCTaskManager::add_task(GCTask* task) {
 #endif
 }
 
+#ifdef EXTRA_COUNTERS
+void GCTaskManager::add_list(GCTaskQueue* list, bool start_gc) {
+#else
 void GCTaskManager::add_list(GCTaskQueue* list) {
+#endif
   assert(list != NULL, "shouldn't have null task");
 #ifndef REPLACE_MUTEX
   MutexLockerEx ml(monitor(), Mutex::_no_safepoint_check_flag);
@@ -613,19 +617,22 @@ void GCTaskManager::add_list(GCTaskQueue* list) {
   }
 #ifdef NUMA_AWARE_TASKQ
   if (UseGCTaskAffinity && UseNUMA) {
-    while (!list->is_empty()) {
-      GCTask* task = list->dequeue();
-      if (task == NULL) break;
-      if (task->affinity() == sentinel_worker())
+    GCTask* task = list->dequeue();
+    while (task != NULL) {
+      if (task->affinity() >= (uint) _numa_queues->length())
         queue()->enqueue(task);
       else
         _numa_queues->at(task->affinity())->enqueue(task);
+      task = list->dequeue();
     }
     list->initialize();
   } else
 #endif
   queue()->enqueue(list);
 
+#ifdef EXTRA_COUNTERS
+  if (start_gc) {
+#endif
 #ifndef REPLACE_MUTEX
   // Notify with the lock held to avoid missed notifies.
   if (TraceGCTaskManager) {
@@ -637,6 +644,9 @@ void GCTaskManager::add_list(GCTaskQueue* list) {
 #else
     _futex++;
     syscall(SYS_futex, futex_addr(), FUTEX_WAKE_PRIVATE, workers(), 0, 0, 0);
+#endif
+#ifdef EXTRA_COUNTERS
+  }
 #endif
 }
 

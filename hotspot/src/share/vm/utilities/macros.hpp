@@ -36,6 +36,7 @@
 #ifdef REPLACE_MUTEX
 #define NUMA_AWARE_TASKQ
 #endif
+#define EXTRA_COUNTERS
 
 // Makes a string of the argument (which is not macro-expanded)
 #define STR(a)  #a

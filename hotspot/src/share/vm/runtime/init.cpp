@@ -145,7 +145,12 @@ jint init_globals() {
 
 extern unsigned long total_safepoint_time;
 unsigned long vm_init_time;
-
+#ifdef EXTRA_COUNTERS
+unsigned long young_gc_time;
+unsigned long young_par_time;
+unsigned young_gc_count;
+unsigned old_gc_count;
+#endif
 void exit_globals() {
   static bool destructorsCalled = false;
   if (!destructorsCalled) {
@@ -155,7 +160,13 @@ void exit_globals() {
       // Print the collected safepoint statistics.
       SafepointSynchronize::print_stat_on_exit();
     }
-    tty->print_cr("%lu\n%lu\n",total_safepoint_time, os::javaTimeMillis() - vm_init_time);
+#ifdef EXTRA_COUNTERS
+    tty->print_cr("Young GC Count: %u\nOld GC Count: %u", young_gc_count, old_gc_count);
+    tty->print_cr("Young || time: %lu\nYoung GC Time: %lu", young_par_time/1000000, young_gc_time/1000000);
+    tty->print_cr("Total GC Time: %lu\nTotal Execution Time: %lu",total_safepoint_time, os::javaTimeMillis() - vm_init_time);
+#else
+    tty->print_cr("%lu\n%lu",total_safepoint_time, os::javaTimeMillis() - vm_init_time);
+#endif
     ostream_exit();
   }
 }

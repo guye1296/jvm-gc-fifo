@@ -381,7 +381,11 @@ public:
   //     Add the argument task to be run.
   void add_task(GCTask* task);
   //     Add a list of tasks.  Removes task from the argument list.
+#ifdef EXTRA_COUNTERS
+  void add_list(GCTaskQueue* list, bool start_gc = true);
+#else
   void add_list(GCTaskQueue* list);
+#endif
   //     Claim a task for argument worker.
   GCTask* get_task(uint which);
   //     Note the completion of a task by the argument worker.

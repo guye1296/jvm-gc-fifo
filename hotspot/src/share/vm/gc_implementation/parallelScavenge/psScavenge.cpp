@@ -214,6 +214,12 @@ void PSRefProcTaskExecutor::execute(EnqueueTask& task)
   ParallelScavengeHeap::gc_task_manager()->execute_and_wait(q);
 }
 
+#ifdef EXTRA_COUNTERS
+extern unsigned long young_par_time;
+extern unsigned long young_gc_time;
+extern unsigned young_gc_count;
+extern unsigned old_gc_count;
+#endif
 // This method contains all heap specific policy for invoking scavenge.
 // PSScavenge::invoke_no_policy() will do nothing but attempt to
 // scavenge. It will not clean up after failed promotions, bail out if
@@ -232,9 +238,14 @@ void PSScavenge::invoke() {
 
   PSAdaptiveSizePolicy* policy = heap->size_policy();
   IsGCActiveMark mark;
-
+#ifdef EXTRA_COUNTERS
+  young_gc_count++;
+  unsigned long temp = os::javaTimeNanos();
   bool scavenge_was_done = PSScavenge::invoke_no_policy();
-
+  young_gc_time += os::javaTimeNanos() - temp;
+#else
+  bool scavenge_was_done = PSScavenge::invoke_no_policy();
+#endif  
   PSGCAdaptivePolicyCounters* counters = heap->gc_policy_counters();
   if (UsePerfData)
     counters->update_full_follows_scavenge(0);
@@ -245,7 +256,9 @@ void PSScavenge::invoke() {
     GCCauseSetter gccs(heap, GCCause::_adaptive_size_policy);
     CollectorPolicy* cp = heap->collector_policy();
     const bool clear_all_softrefs = cp->should_clear_all_soft_refs();
-
+#ifdef EXTRA_COUNTERS
+    old_gc_count++;
+#endif
     if (UseParallelOldGC) {
       PSParallelCompact::invoke_no_policy(clear_all_softrefs);
     } else {
@@ -428,8 +441,14 @@ bool PSScavenge::invoke_no_policy() {
 #endif
         }
       }
-
+#ifdef EXTRA_COUNTERS
+      gc_task_manager()->add_list(q, false);
+      unsigned long temp = os::javaTimeNanos();
       gc_task_manager()->execute_and_wait(q);
+      young_par_time += os::javaTimeNanos() - temp;
+#else
+      gc_task_manager()->execute_and_wait(q);
+#endif
     }
 
     scavenge_midpoint.update();
