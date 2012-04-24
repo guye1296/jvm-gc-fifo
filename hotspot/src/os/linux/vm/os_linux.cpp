@@ -4343,9 +4343,6 @@ bool os::bind_to_processor(uint processor_id) {
   // Not yet implemented.
   return false;
 #else
-  if (processor_id >= (uint) active_processor_count()) {
-       return false;
-  }
   cpu_set_t cpu_set;
   CPU_ZERO(&cpu_set);
   CPU_SET(processor_id, &cpu_set);

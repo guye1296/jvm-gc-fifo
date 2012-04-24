@@ -470,23 +470,43 @@ class GenericTaskQueueSet: public TaskQueueSetSuper {
 private:
   uint _n;
   T** _queues;
-
+#ifdef NUMA_AWARE_STEALING 
+  GrowableArray<GrowableArray<uint>*>* _affinity;
+#endif
 public:
   typedef typename T::element_type E;
-
+#ifdef NUMA_AWARE_STEALING
+  GenericTaskQueueSet(int n, int affinity = -1) : _n(n) {
+#else
   GenericTaskQueueSet(int n) : _n(n) {
+#endif
     typedef T* GenericTaskQueuePtr;
     _queues = NEW_C_HEAP_ARRAY(GenericTaskQueuePtr, n);
     for (int i = 0; i < n; i++) {
       _queues[i] = NULL;
     }
+#ifdef NUMA_AWARE_STEALING
+    if(affinity >= 0) {
+      _affinity = new (ResourceObj::C_HEAP) GrowableArray<GrowableArray<uint>*>(affinity, true);
+      for (int i = 0; i < affinity; i++) {
+        _affinity->append(new (ResourceObj::C_HEAP) GrowableArray<uint>(0, true));
+      }
+    } else
+      _affinity = NULL;
+#endif
   }
+
+#ifdef NUMA_AWARE_STEALING
+  bool steal_1_random(uint queue_num, int* seed, E& t, int affinity);
+  bool steal_best_of_2(uint queue_num, int* seed, E& t, int affinity);
+  bool steal_best_of_all(uint queue_num, int* seed, E& t, int affinity) {}
+  bool peek(int affinity);
+#endif
 
   bool steal_1_random(uint queue_num, int* seed, E& t);
   bool steal_best_of_2(uint queue_num, int* seed, E& t);
   bool steal_best_of_all(uint queue_num, int* seed, E& t);
-
-  void register_queue(uint i, T* q);
+  bool peek();
 
   T* queue(uint n);
 
@@ -495,15 +515,30 @@ public:
   // several queues, according to some configuration parameter.)  If some steal
   // succeeds, returns "true" and sets "t" to the stolen task, otherwise returns
   // false.
+#ifndef NUMA_AWARE_STEALING
   bool steal(uint queue_num, int* seed, E& t);
-
-  bool peek();
+  void register_queue(uint i, T* q);
+#else
+  bool steal(uint queue_num, int* seed, E& t, int affinity = -1);
+  void register_queue(uint i, T* q, int affinity = -1);
+#endif
 };
 
 template<class T> void
+#ifdef NUMA_AWARE_STEALING
+GenericTaskQueueSet<T>::register_queue(uint i, T* q, int affinity) {
+#else
 GenericTaskQueueSet<T>::register_queue(uint i, T* q) {
+#endif
   assert(i < _n, "index out of range.");
   _queues[i] = q;
+#ifdef NUMA_AWARE_STEALING
+  if (affinity >= 0) {
+    assert(affinity < _affinity->length(),
+           "affinity should be less than length");
+    _affinity->at(affinity)->append(i);
+  }
+#endif
 }
 
 template<class T> T*
@@ -512,7 +547,22 @@ GenericTaskQueueSet<T>::queue(uint i) {
 }
 
 template<class T> bool
+#ifdef NUMA_AWARE_STEALING
+GenericTaskQueueSet<T>::steal(uint queue_num, int* seed, E& t, int affinity) {
+#else
 GenericTaskQueueSet<T>::steal(uint queue_num, int* seed, E& t) {
+#endif
+#ifdef NUMA_AWARE_STEALING
+  if (affinity >= 0) {
+    uint n = _affinity->at(affinity)->length();
+    for (uint i = 0; i < 2 * n; i++) {
+      if (steal_1_random(queue_num, seed, t, affinity)) {
+        TASKQUEUE_STATS_ONLY(queue(queue_num)->stats.record_steal(true));
+        return true;
+      }
+    }
+  } else
+#endif
   for (uint i = 0; i < 2 * _n; i++) {
     if (steal_best_of_2(queue_num, seed, t)) {
       TASKQUEUE_STATS_ONLY(queue(queue_num)->stats.record_steal(true));
@@ -522,6 +572,81 @@ GenericTaskQueueSet<T>::steal(uint queue_num, int* seed, E& t) {
   TASKQUEUE_STATS_ONLY(queue(queue_num)->stats.record_steal(false));
   return false;
 }
+#ifdef NUMA_AWARE_STEALING
+template<class T> bool
+GenericTaskQueueSet<T>::steal_1_random(uint queue_num, int* seed, E& t, int affinity) {
+  int n;
+  assert(affinity >= 0 && affinity < _affinity->length(),
+         "should be less than the length");
+  GrowableArray<uint>* array = _affinity->at(affinity);
+  n = array->length();
+
+  if (n > 2) {
+    uint k, num;
+    do {
+      k = randomParkAndMiller(seed) % n;
+      num = array->at(k);
+    } while(num == queue_num);
+    return _queues[num]->pop_global(t);
+  } else if (n == 2) {
+    // Just try the other one.
+    int num = array->at(0) == queue_num ?
+              array->at(1):
+              array->at(0);
+    return _queues[num]->pop_global(t);
+  } else {
+    assert(n == 1, "can't be zero.");
+    return false;
+  }
+}
+
+template<class T> bool
+GenericTaskQueueSet<T>::steal_best_of_2(uint queue_num, int* seed, E& t, int affinity) {
+  int n;
+  assert(affinity >= 0 && affinity < _affinity->length(),
+         "should be less than the length");
+  GrowableArray<uint>* array = _affinity->at(affinity);
+  n = array->length();
+
+  if (n > 2) {
+    uint k1, k2;
+    do {
+      k1 = array->at(randomParkAndMiller(seed) % n);
+    } while(k1 == queue_num);
+
+    do {
+      k2 = array->at(randomParkAndMiller(seed) % n);
+    } while(k2 == queue_num);
+    // Sample both and try the larger.
+    uint sz1 = _queues[k1]->size();
+    uint sz2 = _queues[k2]->size();
+    if (sz2 > sz1) return _queues[k2]->pop_global(t);
+    else return _queues[k1]->pop_global(t);
+  } else if (n == 2) {
+    // Just try the other one.
+    int num = array->at(0) == queue_num ?
+              array->at(1):
+              array->at(0);
+    return _queues[num]->pop_global(t);
+  } else {
+    assert(n == 1, "can't be zero.");
+    return false;
+  }
+}
+
+template<class T>
+bool GenericTaskQueueSet<T>::peek(int affinity) {
+  assert(affinity >= 0 && affinity < _affinity->length(),
+         "should be less than the length");
+  GrowableArray<uint>* array = _affinity->at(affinity);
+  int n = array->length();
+  for (int j = 0; j < n; j++) {
+    if (_queues[array->at(j)]->peek())
+      return true;
+  }
+  return false;
+}
+#endif
 
 template<class T> bool
 GenericTaskQueueSet<T>::steal_best_of_all(uint queue_num, int* seed, E& t) {
@@ -587,6 +712,11 @@ GenericTaskQueueSet<T>::steal_best_of_2(uint queue_num, int* seed, E& t) {
 
 template<class T>
 bool GenericTaskQueueSet<T>::peek() {
+#ifdef NUMA_AWARE_STEALING 
+  //We assume if _affinity is set and lgrp_id is valid, then there is
+  //concept of numa-aware work stealing. Definitely needs to be fixed
+  if (_affinity) return peek(Thread::current()->lgrp_id());
+#endif
   // Try all the queues.
   for (uint j = 0; j < _n; j++) {
     if (_queues[j]->peek())

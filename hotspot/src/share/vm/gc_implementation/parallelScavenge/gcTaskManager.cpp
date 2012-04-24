@@ -75,12 +75,20 @@ GCTask::GCTask(Kind::kind kind) :
 GCTask::GCTask(uint affinity) :
   _kind(Kind::ordinary_task),
   _affinity(affinity) {
+#ifdef NUMA_AWARE_TASKQ
+  assert(!UseNUMA || affinity < os::numa_get_groups_num(),
+        "affinity should not be negative");
+#endif
   initialize();
 }
 
 GCTask::GCTask(Kind::kind kind, uint affinity) :
   _kind(kind),
   _affinity(affinity) {
+#ifdef NUMA_AWARE_TASKQ
+  assert(!UseNUMA || affinity < os::numa_get_groups_num(),
+        "affinity should not be negative");
+#endif
   initialize();
 }
 
@@ -146,6 +154,12 @@ GCTaskQueue::GCTaskQueue(bool on_c_heap) :
                   this);
   }
 }
+
+#ifdef NUMA_AWARE_TASKQ
+GCTaskQueue::~GCTaskQueue() {
+  destroy(this);
+}
+#endif
 
 void GCTaskQueue::destruct() {
   // Nothing to do.
@@ -234,6 +248,7 @@ void GCTaskQueue::enqueue(GCTaskQueue* list) {
     // empty the argument list.
   }
   set_length(length() + list_length);
+  
   list->initialize();
   if (TraceGCTaskQueue) {
     print("after:");
@@ -436,6 +451,15 @@ void GCTaskManager::initialize() {
   reset_noop_tasks();
 #else
   _queue = GCTaskQueue::create_on_c_heap();
+#ifdef NUMA_AWARE_TASKQ
+  if (UseGCTaskAffinity && UseNUMA) {
+    uint n = os::numa_get_groups_num();
+    _numa_queues = new (ResourceObj::C_HEAP) GrowableArray<GCTaskQueue*>(n, true);
+    for (uint i=0; i < n; i++)
+      _numa_queues->append(GCTaskQueue::create_on_c_heap());
+  } else
+    _numa_queues = NULL;
+#endif
   _terminator[0] = new ParallelTaskTerminator(0, NULL);
   _terminator[1] = new ParallelTaskTerminator(0, NULL);
 #endif
@@ -511,6 +535,10 @@ GCTaskManager::~GCTaskManager() {
     GCTaskQueue::destroy(queue());
     _queue = NULL;
   }
+#ifdef NUMA_AWARE_TASKQ
+  if (_numa_queues != NULL)
+    delete _numa_queues;
+#endif
   delete _terminator[0];
   delete _terminator[1];
 #endif
@@ -583,7 +611,21 @@ void GCTaskManager::add_list(GCTaskQueue* list) {
   if (TraceGCTaskManager) {
     tty->print_cr("GCTaskManager::add_list(%u)", list->length());
   }
+#ifdef NUMA_AWARE_TASKQ
+  if (UseGCTaskAffinity && UseNUMA) {
+    while (!list->is_empty()) {
+      GCTask* task = list->dequeue();
+      if (task == NULL) break;
+      if (task->affinity() == sentinel_worker())
+        queue()->enqueue(task);
+      else
+        _numa_queues->at(task->affinity())->enqueue(task);
+    }
+    list->initialize();
+  } else
+#endif
   queue()->enqueue(list);
+
 #ifndef REPLACE_MUTEX
   // Notify with the lock held to avoid missed notifies.
   if (TraceGCTaskManager) {
@@ -593,8 +635,8 @@ void GCTaskManager::add_list(GCTaskQueue* list) {
   (void) monitor()->notify_all();
   // Release monitor().
 #else
-  _futex++;
-  syscall(SYS_futex, futex_addr(), FUTEX_WAKE_PRIVATE, workers(), 0, 0, 0);
+    _futex++;
+    syscall(SYS_futex, futex_addr(), FUTEX_WAKE_PRIVATE, workers(), 0, 0, 0);
 #endif
 }
 
@@ -620,7 +662,14 @@ tryagain:
       ((GCTaskThread*)Thread::current())->inc_futex_ts();
     } while (is_blocked());
   }
-
+#ifdef NUMA_AWARE_TASKQ
+  if (UseGCTaskAffinity && UseNUMA) {
+    int lgrp_id = thread(which)->lgrp_id();
+    result = _numa_queues->at(lgrp_id)->dequeue();
+    if (result == NULL)
+      result = queue()->dequeue();
+  } else
+#endif
   result = queue()->dequeue();
   if (result) {
     if (result->is_barrier_task()) {

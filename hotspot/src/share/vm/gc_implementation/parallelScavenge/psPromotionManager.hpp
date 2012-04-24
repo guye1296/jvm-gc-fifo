@@ -153,10 +153,15 @@ class PSPromotionManager : public CHeapObj {
 
   static PSPromotionManager* gc_thread_promotion_manager(int index);
   static PSPromotionManager* vm_thread_promotion_manager();
-
+#ifdef NUMA_AWARE_STEALING
+  static bool steal_depth(int queue_num, int* seed, StarTask& t, int affinity) {
+    return stack_array_depth()->steal(queue_num, seed, t, affinity);
+  }
+#else
   static bool steal_depth(int queue_num, int* seed, StarTask& t) {
     return stack_array_depth()->steal(queue_num, seed, t);
   }
+#endif
 
   PSPromotionManager();
 

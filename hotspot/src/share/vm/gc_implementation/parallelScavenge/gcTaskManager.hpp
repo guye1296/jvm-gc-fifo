@@ -160,6 +160,9 @@ public:
   static GCTaskQueue* create_on_c_heap();
   //     Destroyer.
   static void destroy(GCTaskQueue* that);
+#ifdef NUMA_AWARE_TASKQ
+  ~GCTaskQueue();
+#endif
   // Accessors.
   //     These just examine the state of the queue.
   bool is_empty() const {
@@ -177,6 +180,7 @@ public:
     return _length;
   }
   // Methods.
+  void initialize();
   //     Enqueue one task.
   void enqueue(GCTask* task);
   //     Enqueue a list of tasks.  Empties the argument list.
@@ -223,7 +227,6 @@ protected:
     return _is_c_heap_obj;
   }
   // Methods.
-  void initialize();
   GCTask* remove();                     // Remove from remove end.
   GCTask* remove(GCTask* task);         // Remove from the middle.
   void print(const char* message) const PRODUCT_RETURN;
@@ -321,6 +324,10 @@ private:
 #ifdef REPLACE_MUTEX
   int                       _futex;
   GCTaskQueue*              _queue;
+#ifdef NUMA_AWARE_TASKQ
+  GrowableArray<GCTaskQueue*>* _numa_queues;    // This is a list of NUMA queues.
+                                                // The above list is for non-affine tasks.
+#endif
   ParallelTaskTerminator*  _terminator[2];
   uint                      _terminator_idx;
 #else
@@ -370,6 +377,7 @@ public:
   }
 #endif
   // Methods.
+  GCTaskThread* thread(uint which);
   //     Add the argument task to be run.
   void add_task(GCTask* task);
   //     Add a list of tasks.  Removes task from the argument list.
@@ -444,7 +452,6 @@ protected:
 #endif
   
   //     Bounds-checking per-thread data accessors.
-  GCTaskThread* thread(uint which);
   void set_thread(uint which, GCTaskThread* value);
   bool resource_flag(uint which);
   void set_resource_flag(uint which, bool value);

@@ -32,6 +32,10 @@
 #define REPLACE_MUTEX
 #define YOUNGGEN_8TIMES
 #define THREAD_AFFINITY
+#define NUMA_AWARE_STEALING
+#ifdef REPLACE_MUTEX
+#define NUMA_AWARE_TASKQ
+#endif
 
 // Makes a string of the argument (which is not macro-expanded)
 #define STR(a)  #a

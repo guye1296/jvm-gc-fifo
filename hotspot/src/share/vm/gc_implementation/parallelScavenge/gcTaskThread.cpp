@@ -113,6 +113,11 @@ void GCTaskThread::run() {
       )
     }
   }
+#ifdef THREAD_AFFINITY
+  if (UseNUMA)
+    Thread::current()->set_lgrp_id(os::numa_get_group_id());
+#endif
+
   // Part of thread setup.
   // ??? Are these set up once here to make subsequent ones fast?
   HandleMark   hm_outer;

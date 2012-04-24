@@ -32,6 +32,11 @@
 #include "oops/oop.inline.hpp"
 #include "oops/oop.psgc.inline.hpp"
 
+#ifdef NUMA_AWARE_STEALING
+#include "gc_implementation/parallelScavenge/gcTaskManager.hpp"
+#include "gc_implementation/parallelScavenge/gcTaskThread.hpp"
+#endif
+
 PSPromotionManager**         PSPromotionManager::_manager_array = NULL;
 OopStarTaskQueueSet*         PSPromotionManager::_stack_array_depth = NULL;
 PSOldGen*                    PSPromotionManager::_old_gen = NULL;
@@ -47,7 +52,11 @@ void PSPromotionManager::initialize() {
   assert(_manager_array == NULL, "Attempt to initialize twice");
   _manager_array = NEW_C_HEAP_ARRAY(PSPromotionManager*, ParallelGCThreads+1 );
   guarantee(_manager_array != NULL, "Could not initialize promotion manager");
-
+#ifdef NUMA_AWARE_STEALING
+  if (UseNUMA)
+    _stack_array_depth = new OopStarTaskQueueSet(ParallelGCThreads, os::numa_get_groups_num());
+  else
+#endif
   _stack_array_depth = new OopStarTaskQueueSet(ParallelGCThreads);
   guarantee(_stack_array_depth != NULL, "Cound not initialize promotion manager");
 
@@ -55,6 +64,12 @@ void PSPromotionManager::initialize() {
   for(uint i=0; i<ParallelGCThreads; i++) {
     _manager_array[i] = new PSPromotionManager();
     guarantee(_manager_array[i] != NULL, "Could not create PSPromotionManager");
+#ifdef NUMA_AWARE_STEALING
+    if (UseNUMA) {//set the lgrp_id same as the thread's on the queue as well.
+      stack_array_depth()->register_queue(i, _manager_array[i]->claimed_stack_depth(),
+                                          heap->gc_task_manager()->thread(i)->lgrp_id());
+    } else
+#endif
     stack_array_depth()->register_queue(i, _manager_array[i]->claimed_stack_depth());
   }
 

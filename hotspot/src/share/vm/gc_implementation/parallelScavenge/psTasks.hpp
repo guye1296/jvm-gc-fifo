@@ -85,9 +85,13 @@ class ThreadRootsTask : public GCTask {
   JavaThread* _java_thread;
   VMThread* _vm_thread;
  public:
+#ifdef NUMA_AWARE_TASKQ
+  ThreadRootsTask(JavaThread* root) : _java_thread(root), _vm_thread(NULL), GCTask((uint) root->lgrp_id()) {}
+  ThreadRootsTask(VMThread* root) : _java_thread(NULL), _vm_thread(root), GCTask((uint) root->lgrp_id()) {}
+#else
   ThreadRootsTask(JavaThread* root) : _java_thread(root), _vm_thread(NULL) {}
   ThreadRootsTask(VMThread* root) : _java_thread(NULL), _vm_thread(root) {}
-
+#endif
   char* name() { return (char *)"thread-roots-task"; }
 
   virtual void do_it(GCTaskManager* manager, uint which);
