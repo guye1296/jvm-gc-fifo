@@ -217,6 +217,8 @@ void PSRefProcTaskExecutor::execute(EnqueueTask& task)
 #ifdef EXTRA_COUNTERS
 extern unsigned long young_par_time;
 extern unsigned long young_gc_time;
+extern unsigned long young_resize_time;
+extern unsigned long young_weak_ref_time;
 extern unsigned young_gc_count;
 extern unsigned old_gc_count;
 #endif
@@ -453,6 +455,9 @@ bool PSScavenge::invoke_no_policy() {
 
     scavenge_midpoint.update();
 
+#ifdef EXTRA_COUNTERS
+    unsigned long temp = os::javaTimeNanos();
+#endif
     // Process reference objects discovered during scavenge
     {
       reference_processor()->setup_policy(false); // not always_clear
@@ -475,6 +480,9 @@ bool PSScavenge::invoke_no_policy() {
     } else {
       reference_processor()->enqueue_discovered_references(NULL);
     }
+#ifdef EXTRA_COUNTERS
+    young_weak_ref_time += os::javaTimeNanos() - temp;
+#endif
 
     if (!JavaObjectsInPerm) {
       // Unlink any dead interned Strings
@@ -603,10 +611,15 @@ bool PSScavenge::invoke_no_policy() {
         // Resizing the old gen at minor collects can cause increases
         // that don't feed back to the generation sizing policy until
         // a major collection.  Don't resize the old gen here.
-
+#ifdef EXTRA_COUNTERS
+        unsigned long temp = os::javaTimeNanos();
         heap->resize_young_gen(size_policy->calculated_eden_size_in_bytes(),
                         size_policy->calculated_survivor_size_in_bytes());
-
+        young_resize_time += os::javaTimeNanos() - temp;
+#else
+        heap->resize_young_gen(size_policy->calculated_eden_size_in_bytes(),
+                        size_policy->calculated_survivor_size_in_bytes());
+#endif
         if (PrintAdaptiveSizePolicy) {
           gclog_or_tty->print_cr("AdaptiveSizeStop: collection: %d ",
                          heap->total_collections());

@@ -148,6 +148,8 @@ unsigned long vm_init_time;
 #ifdef EXTRA_COUNTERS
 unsigned long young_gc_time;
 unsigned long young_par_time;
+unsigned long young_resize_time;
+unsigned long young_weak_ref_time;
 unsigned young_gc_count;
 unsigned old_gc_count;
 #endif
@@ -162,6 +164,7 @@ void exit_globals() {
     }
 #ifdef EXTRA_COUNTERS
     tty->print_cr("Young GC Count: %u\nOld GC Count: %u", young_gc_count, old_gc_count);
+    tty->print_cr("Young resize time: %lu\nYoung weak ref time: %lu", young_resize_time/1000000, young_weak_ref_time/1000000);
     tty->print_cr("Young || time: %lu\nYoung GC Time: %lu", young_par_time/1000000, young_gc_time/1000000);
     tty->print_cr("Total GC Time: %lu\nTotal Execution Time: %lu",total_safepoint_time, os::javaTimeMillis() - vm_init_time);
 #else
