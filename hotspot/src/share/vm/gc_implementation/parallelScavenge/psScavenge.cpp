@@ -186,18 +186,20 @@ void PSRefProcTaskExecutor::execute(ProcessTask& task)
   }
 #ifndef REPLACE_MUTEX
   ParallelTaskTerminator terminator(
-#else
-  ParallelTaskTerminator* terminator =
-                 ParallelScavengeHeap::gc_task_manager()->terminator(
-#endif
                  ParallelScavengeHeap::gc_task_manager()->workers(),
                  (TaskQueueSetSuper*) PSPromotionManager::stack_array_depth());
+#endif
   if (task.marks_oops_alive() && ParallelGCThreads > 1) {
+#ifdef REPLACE_MUTEX
+    ParallelTaskTerminator* terminator =
+                 ParallelScavengeHeap::gc_task_manager()->terminator(
+                 ParallelScavengeHeap::gc_task_manager()->workers(),
+                 (TaskQueueSetSuper*) PSPromotionManager::stack_array_depth());
     for (uint j=0; j<ParallelGCThreads; j++) {
-#ifndef REPLACE_MUTEX
-      q->enqueue(new StealTask(&terminator));
-#else
       q->enqueue(new StealTask(terminator));
+#else
+    for (uint j=0; j<ParallelGCThreads; j++) {
+      q->enqueue(new StealTask(&terminator));
 #endif
     }
   }

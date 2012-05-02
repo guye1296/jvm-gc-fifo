@@ -157,15 +157,25 @@ void RefProcTaskExecutor::execute(ProcessTask& task)
   ParallelScavengeHeap* heap = PSParallelCompact::gc_heap();
   uint parallel_gc_threads = heap->gc_task_manager()->workers();
   RegionTaskQueueSet* qset = ParCompactionManager::region_array();
+#ifndef REPLACE_MUTEX
   ParallelTaskTerminator terminator(parallel_gc_threads, qset);
+#endif
   GCTaskQueue* q = GCTaskQueue::create();
   for(uint i=0; i<parallel_gc_threads; i++) {
     q->enqueue(new RefProcTaskProxy(task, i));
   }
   if (task.marks_oops_alive()) {
     if (parallel_gc_threads>1) {
+#ifndef REPLACE_MUTEX
       for (uint j=0; j<parallel_gc_threads; j++) {
         q->enqueue(new StealMarkingTask(&terminator));
+#else
+      ParallelTaskTerminator* terminator = 
+                 ParallelScavengeHeap::gc_task_manager()->terminator(
+                 parallel_gc_threads, qset);
+      for (uint j=0; j<parallel_gc_threads; j++) {
+        q->enqueue(new StealMarkingTask(terminator));
+#endif
       }
     }
   }
