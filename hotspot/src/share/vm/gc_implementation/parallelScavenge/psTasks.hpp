@@ -116,6 +116,19 @@ class StealTask : public GCTask {
   virtual void do_it(GCTaskManager* manager, uint which);
 };
 
+#ifdef TERMINATOR_GCTASK
+// This task is very similar to StealTask except that it only has
+// the terminator implemented
+class TerminatorTask : public StealTask {
+public:
+  char* name() { return (char *)"Terminator-task"; }
+
+  TerminatorTask(ParallelTaskTerminator* t) : StealTask(t) {}
+
+  virtual void do_it(GCTaskManager* manager, uint which);
+};
+#endif
+
 //
 // SerialOldToYoungRootsTask
 //

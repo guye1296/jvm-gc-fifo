@@ -35,6 +35,7 @@
 #define NUMA_AWARE_STEALING
 #ifdef REPLACE_MUTEX
 #define NUMA_AWARE_TASKQ
+#define TERMINATOR_GCTASK
 #endif
 #define EXTRA_COUNTERS
 

@@ -163,6 +163,14 @@ void StealTask::do_it(GCTaskManager* manager, uint which) {
   guarantee(pm->stacks_empty(), "stacks should be empty at this point");
 }
 
+#ifdef TERMINATOR_GCTASK
+void TerminatorTask::do_it(GCTaskManager* manager, uint which) {
+  assert(Universe::heap()->is_gc_active(), "called outside gc");
+
+  terminator()->offer_termination();
+}
+#endif
+
 //
 // SerialOldToYoungRootsTask
 //

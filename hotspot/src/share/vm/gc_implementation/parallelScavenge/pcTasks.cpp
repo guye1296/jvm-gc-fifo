@@ -179,6 +179,16 @@ void RefProcTaskExecutor::execute(ProcessTask& task)
       }
     }
   }
+#ifdef TERMINATOR_GCTASK
+  else if (ParallelGCThreads > 1) {
+    ParallelTaskTerminator* terminator =
+                 ParallelScavengeHeap::gc_task_manager()->terminator(
+                 parallel_gc_threads, NULL);
+    for (uint j=0; j<parallel_gc_threads; j++) {
+      q->enqueue(new TerminatorTask(terminator));
+    }
+  }
+#endif
   PSParallelCompact::gc_task_manager()->execute_and_wait(q);
 }
 
@@ -190,6 +200,16 @@ void RefProcTaskExecutor::execute(EnqueueTask& task)
   for(uint i=0; i<parallel_gc_threads; i++) {
     q->enqueue(new RefEnqueueTaskProxy(task, i));
   }
+#ifdef TERMINATOR_GCTASK
+  if (ParallelGCThreads > 1) {
+    ParallelTaskTerminator* terminator =
+                 ParallelScavengeHeap::gc_task_manager()->terminator(
+                 parallel_gc_threads, NULL);
+    for (uint j=0; j<parallel_gc_threads; j++) {
+      q->enqueue(new TerminatorTask(terminator));
+    }
+  }
+#endif
   PSParallelCompact::gc_task_manager()->execute_and_wait(q);
 }
 
