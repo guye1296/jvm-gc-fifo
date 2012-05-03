@@ -446,12 +446,20 @@ bool PSScavenge::invoke_no_policy() {
         }
       }
 #ifdef EXTRA_COUNTERS
+#ifdef NUMA_AWARE_TASKQ
+      gc_task_manager()->add_list(q, false, true);
+#else
       gc_task_manager()->add_list(q, false);
+#endif
       unsigned long temp = os::javaTimeNanos();
       gc_task_manager()->execute_and_wait(q);
       young_par_time += os::javaTimeNanos() - temp;
 #else
+#ifdef NUMA_AWARE_TASKQ
+      gc_task_manager()->add_list(q, true);
+#else
       gc_task_manager()->execute_and_wait(q);
+#endif
 #endif
     }
 

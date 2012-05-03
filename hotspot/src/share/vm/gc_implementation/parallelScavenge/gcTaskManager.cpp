@@ -156,6 +156,11 @@ GCTaskQueue::GCTaskQueue(bool on_c_heap) :
 }
 
 #ifdef NUMA_AWARE_TASKQ
+GCTaskQueue::GCTaskQueue() :
+  _is_c_heap_obj(false) {
+  initialize();
+}
+
 GCTaskQueue::~GCTaskQueue() {
   destroy(this);
 }
@@ -604,9 +609,17 @@ void GCTaskManager::add_task(GCTask* task) {
 }
 
 #ifdef EXTRA_COUNTERS
+#ifdef NUMA_AWARE_TASKQ
+void GCTaskManager::add_list(GCTaskQueue* list, bool start_gc, bool have_affinity_tasks) {
+#else
 void GCTaskManager::add_list(GCTaskQueue* list, bool start_gc) {
+#endif
+#else
+#ifdef NUMA_AWARE_TASKQ
+void GCTaskManager::add_list(GCTaskQueue* list, bool have_affinity_tasks) {
 #else
 void GCTaskManager::add_list(GCTaskQueue* list) {
+#endif
 #endif
   assert(list != NULL, "shouldn't have null task");
 #ifndef REPLACE_MUTEX
@@ -616,15 +629,21 @@ void GCTaskManager::add_list(GCTaskQueue* list) {
     tty->print_cr("GCTaskManager::add_list(%u)", list->length());
   }
 #ifdef NUMA_AWARE_TASKQ
-  if (UseGCTaskAffinity && UseNUMA) {
+  if (UseGCTaskAffinity && UseNUMA && have_affinity_tasks) {
+    GCTaskQueue q;
+    GCTaskQueue numa_q[_numa_queues->length()];
     GCTask* task = list->dequeue();
     while (task != NULL) {
       if (task->affinity() >= (uint) _numa_queues->length())
-        queue()->enqueue(task);
+        q.enqueue(task);
       else
-        _numa_queues->at(task->affinity())->enqueue(task);
+        numa_q[task->affinity()].enqueue(task);
       task = list->dequeue();
     }
+    for (int i = 0; i < _numa_queues->length(); i++) {
+      _numa_queues->at(i)->enqueue(numa_q + i);
+    }
+    queue()->enqueue(&q);
     list->initialize();
   } else
 #endif

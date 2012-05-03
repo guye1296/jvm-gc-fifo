@@ -161,6 +161,7 @@ public:
   //     Destroyer.
   static void destroy(GCTaskQueue* that);
 #ifdef NUMA_AWARE_TASKQ
+  GCTaskQueue();
   ~GCTaskQueue();
 #endif
   // Accessors.
@@ -382,9 +383,17 @@ public:
   void add_task(GCTask* task);
   //     Add a list of tasks.  Removes task from the argument list.
 #ifdef EXTRA_COUNTERS
+#ifdef NUMA_AWARE_TASKQ
+  void add_list(GCTaskQueue* list, bool start_gc = true, bool have_affinity_tasks = false);
+#else
   void add_list(GCTaskQueue* list, bool start_gc = true);
+#endif
+#else
+#ifdef NUMA_AWARE_TASKQ
+  void add_list(GCTaskQueue* list, bool have_affinity_tasks = false);
 #else
   void add_list(GCTaskQueue* list);
+#endif
 #endif
   //     Claim a task for argument worker.
   GCTask* get_task(uint which);
