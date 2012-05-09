@@ -142,6 +142,15 @@ void GCTaskThread::run() {
       char* name = task->name();
 
       task->do_it(manager(), which());
+#ifdef NUMA_AWARE_C_HEAP
+      size_t s = task->size();
+      if (s > sizeof(GCTask) && task->affinity() != GCTaskManager::sentinel_worker()) {
+        GCTask::operator delete(task, s);
+      }
+#ifdef REPLACE_MUTEX
+      else
+#endif
+#endif
 #ifdef REPLACE_MUTEX
       delete task;
 #endif

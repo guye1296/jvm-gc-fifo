@@ -58,6 +58,9 @@ void* GenericGrowableArray::raw_allocate(int elementSize) {
   if (on_stack()) {
     return (void*)resource_allocate_bytes(byte_size);
   } else if (on_C_heap()) {
+#ifdef NUMA_AWARE_C_HEAP 
+    if (_lgrp_id > -1) return (void*)NUMA_NEW_C_HEAP_ARRAY(char, byte_size, _lgrp_id);
+#endif
     return (void*)AllocateHeap(byte_size, "GrET in " __FILE__);
   } else {
     return _arena->Amalloc(byte_size);

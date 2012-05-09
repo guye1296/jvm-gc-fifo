@@ -61,7 +61,11 @@ class ThreadClosure;
 #ifdef REPLACE_MUTEX
 class GCTask : public CHeapObj {
 #else
+#ifdef NUMA_AWARE_C_HEAP
+class GCTask : public CHeapObj, public ResourceObj {
+#else
 class GCTask : public ResourceObj {
+#endif
 #endif
 public:
   // Known kinds of GCTasks, for predicates.
@@ -85,7 +89,9 @@ private:
 #endif
 public:
   virtual char* name() { return (char *)"task"; }
-
+#ifdef NUMA_AWARE_C_HEAP
+  virtual size_t size() { return sizeof(GCTask);}
+#endif
   // Abstract do_it method
   virtual void do_it(GCTaskManager* manager, uint which) = 0;
   // Accessors
@@ -108,6 +114,24 @@ public:
   void set_older(GCTask* p) {
     _older = p;
   }
+#ifdef NUMA_AWARE_C_HEAP 
+  //new and delete operators
+  void* operator new(size_t size) { return ResourceObj::operator new(size);}
+  void* operator new(size_t size, allocation_type type) {
+    return ResourceObj::operator new(size, type);
+  }
+  void* operator new(size_t size, Arena* arena) {
+    return ResourceObj::operator new(size, arena);
+  }
+  void operator delete(void* p) { ResourceObj::operator delete(p);}
+  //for numa-aware allocation.
+  void* operator new(size_t size, bool dummy, int lgrp_id) {
+    return CHeapObj::operator new(size, lgrp_id);
+  }
+  void operator delete(void* p, size_t size) {
+    CHeapObj::operator delete(p, size);
+  }
+#endif
 #else
   virtual ~GCTask();
 #endif

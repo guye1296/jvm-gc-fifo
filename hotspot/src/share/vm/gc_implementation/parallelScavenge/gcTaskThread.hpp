@@ -52,11 +52,25 @@ private:
   static GCTaskThread* create(GCTaskManager* manager,
                               uint           which,
                               uint           processor_id) {
+#ifdef NUMA_AWARE_C_HEAP
+    if (UseNUMA) {
+      int lgrp_id = os::Linux::get_node_by_cpu(processor_id);
+      GCTaskThread* t = new(lgrp_id) GCTaskThread(manager, which, processor_id);
+      return t;
+    }
+#endif
     return new GCTaskThread(manager, which, processor_id);
   }
   static void destroy(GCTaskThread* manager) {
     if (manager != NULL) {
+#ifdef NUMA_AWARE_C_HEAP
+      if (UseNUMA)
+        Thread::operator delete(manager, sizeof(GCTaskThread));
+      else
+        Thread::operator delete(manager);
+#else
       delete manager;
+#endif
     }
   }
   // Methods from Thread.

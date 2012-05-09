@@ -2516,6 +2516,12 @@ size_t os::numa_get_groups_num() {
   return max_node > 0 ? max_node + 1 : 1;
 }
 
+#ifdef NUMA_AWARE_C_HEAP
+void* os::numa_alloc_onnode(size_t size, int node) {
+  return Linux::numa_alloc_onnode(size, node);
+}
+#endif
+
 int os::numa_get_group_id() {
   int cpu_id = Linux::sched_getcpu();
   if (cpu_id != -1) {
@@ -2582,8 +2588,10 @@ bool os::Linux::libnuma_init() {
                                             libnuma_dlsym(handle, "numa_tonode_memory")));
       set_numa_interleave_memory(CAST_TO_FN_PTR(numa_interleave_memory_func_t,
                                             libnuma_dlsym(handle, "numa_interleave_memory")));
-
-
+#ifdef NUMA_AWARE_C_HEAP
+      set_numa_alloc_onnode(CAST_TO_FN_PTR(numa_alloc_onnode_func_t,
+                                            libnuma_dlsym(handle, "numa_alloc_onnode")));
+#endif
       if (numa_available() != -1) {
 #ifdef YOUNGGEN_8TIMES
         numa_set_bind_policy(0); //set it to use MPOL_PREFERRED policy
@@ -2654,6 +2662,9 @@ os::Linux::numa_max_node_func_t os::Linux::_numa_max_node;
 os::Linux::numa_available_func_t os::Linux::_numa_available;
 os::Linux::numa_tonode_memory_func_t os::Linux::_numa_tonode_memory;
 os::Linux::numa_interleave_memory_func_t os::Linux::_numa_interleave_memory;
+#ifdef NUMA_AWARE_C_HEAP 
+os::Linux::numa_alloc_onnode_func_t os::Linux::_numa_alloc_onnode;
+#endif
 unsigned long* os::Linux::_numa_all_nodes;
 
 bool os::uncommit_memory(char* addr, size_t size) {

@@ -93,7 +93,9 @@ class ThreadRootsTask : public GCTask {
   ThreadRootsTask(VMThread* root) : _java_thread(NULL), _vm_thread(root) {}
 #endif
   char* name() { return (char *)"thread-roots-task"; }
-
+#ifdef NUMA_AWARE_C_HEAP
+  virtual size_t size() { return sizeof(ThreadRootsTask);}
+#endif
   virtual void do_it(GCTaskManager* manager, uint which);
 };
 

@@ -62,15 +62,29 @@ void PSPromotionManager::initialize() {
 
   // Create and register the PSPromotionManager(s) for the worker threads.
   for(uint i=0; i<ParallelGCThreads; i++) {
+#ifndef NUMA_AWARE_C_HEAP
     _manager_array[i] = new PSPromotionManager();
     guarantee(_manager_array[i] != NULL, "Could not create PSPromotionManager");
+#endif
 #ifdef NUMA_AWARE_STEALING
     if (UseNUMA) {//set the lgrp_id same as the thread's on the queue as well.
+      int lgrp_id = heap->gc_task_manager()->thread(i)->lgrp_id();
+#ifdef NUMA_AWARE_C_HEAP
+      _manager_array[i] = new(lgrp_id) PSPromotionManager(lgrp_id);
+      guarantee(_manager_array[i] != NULL, "Could not create PSPromotionManager");
+#endif
       stack_array_depth()->register_queue(i, _manager_array[i]->claimed_stack_depth(),
                                           heap->gc_task_manager()->thread(i)->lgrp_id());
-    } else
+    } else {
 #endif
-    stack_array_depth()->register_queue(i, _manager_array[i]->claimed_stack_depth());
+#ifdef NUMA_AWARE_C_HEAP
+      _manager_array[i] = new PSPromotionManager();
+      guarantee(_manager_array[i] != NULL, "Could not create PSPromotionManager");
+#endif
+      stack_array_depth()->register_queue(i, _manager_array[i]->claimed_stack_depth());
+#ifdef NUMA_AWARE_STEALING
+    }
+#endif
   }
 
   // The VMThread gets its own PSPromotionManager, which is not available
@@ -158,7 +172,11 @@ PSPromotionManager::reset_stats() {
 }
 #endif // TASKQUEUE_STATS
 
+#ifdef NUMA_AWARE_C_HEAP
+PSPromotionManager::PSPromotionManager(int lgrp_id) {
+#else
 PSPromotionManager::PSPromotionManager() {
+#endif
   ParallelScavengeHeap* heap = (ParallelScavengeHeap*)Universe::heap();
   assert(heap->kind() == CollectedHeap::ParallelScavengeHeap, "Sanity");
 
@@ -166,6 +184,11 @@ PSPromotionManager::PSPromotionManager() {
   _old_lab.set_start_array(old_gen()->start_array());
 
   uint queue_size;
+#ifdef NUMA_AWARE_C_HEAP
+  if (UseNUMA)
+    claimed_stack_depth()->initialize(lgrp_id);
+  else
+#endif
   claimed_stack_depth()->initialize();
   queue_size = claimed_stack_depth()->max_elems();
 

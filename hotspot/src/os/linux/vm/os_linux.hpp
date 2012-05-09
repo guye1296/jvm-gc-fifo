@@ -250,13 +250,18 @@ private:
   typedef int (*numa_available_func_t)(void);
   typedef int (*numa_tonode_memory_func_t)(void *start, size_t size, int node);
   typedef void (*numa_interleave_memory_func_t)(void *start, size_t size, unsigned long *nodemask);
-
+#ifdef NUMA_AWARE_C_HEAP
+  typedef void* (*numa_alloc_onnode_func_t)(size_t size, int node);
+#endif
   static sched_getcpu_func_t _sched_getcpu;
   static numa_node_to_cpus_func_t _numa_node_to_cpus;
   static numa_max_node_func_t _numa_max_node;
   static numa_available_func_t _numa_available;
   static numa_tonode_memory_func_t _numa_tonode_memory;
   static numa_interleave_memory_func_t _numa_interleave_memory;
+#ifdef NUMA_AWARE_C_HEAP
+  static numa_alloc_onnode_func_t _numa_alloc_onnode;
+#endif
   static unsigned long* _numa_all_nodes;
 
 #ifdef YOUNGGEN_8TIMES
@@ -270,6 +275,9 @@ private:
   static void set_numa_tonode_memory(numa_tonode_memory_func_t func) { _numa_tonode_memory = func; }
   static void set_numa_interleave_memory(numa_interleave_memory_func_t func) { _numa_interleave_memory = func; }
   static void set_numa_all_nodes(unsigned long* ptr) { _numa_all_nodes = ptr; }
+#ifdef NUMA_AWARE_C_HEAP
+  static void set_numa_alloc_onnode(numa_alloc_onnode_func_t func) { _numa_alloc_onnode = func; }
+#endif
 public:
 #ifdef YOUNGGEN_8TIMES
   static void numa_set_bind_policy(int strict) {
@@ -292,6 +300,11 @@ public:
       _numa_interleave_memory(start, size, _numa_all_nodes);
     }
   }
+#ifdef NUMA_AWARE_C_HEAP
+  static void* numa_alloc_onnode(size_t size, int node) {
+    return _numa_alloc_onnode != NULL ? _numa_alloc_onnode(size, node) : NULL;
+  }
+#endif
   static int get_node_by_cpu(int cpu_id);
 };
 

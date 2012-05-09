@@ -40,6 +40,61 @@
 # include "os_windows.inline.hpp"
 #endif
 
+#ifdef NUMA_AWARE_C_HEAP
+#include "memory/numaCHeap.hpp"
+
+NUMACHeap** CHeapObj::_numa_nodes = NULL;
+int CHeapObj::_node_count = 0;
+
+void CHeapObj::initialize() {
+  assert(UseNUMA, "Must be UseNUMA to come here!");
+  _node_count = os::numa_get_groups_num();
+  _numa_nodes = (NUMACHeap**) os::malloc(_node_count*sizeof(NUMACHeap*));
+  
+  for(int i = 0; i < _node_count; i++) {
+    _numa_nodes[i] = new(i, NUMA_MAP_SIZE) NUMACHeap(i, NUMA_MAP_SIZE);
+  }
+}
+
+void* CHeapObj::allocate(size_t size, int lgrp_id) {
+  assert(UseNUMA, "Must be UseNUMA to come here!");
+  //verify lgrp_id first.
+  if (lgrp_id < 0 || lgrp_id >= _node_count) {
+    lgrp_id = os::numa_get_group_id();
+  }
+  return _numa_nodes[lgrp_id]->alloc(size);
+}
+
+void CHeapObj::free(void* p, size_t size) {
+  int i = 0;
+  if (!UseNUMA)
+    goto no_numa;
+  do {
+    if (_numa_nodes[i]->region_contains(p)) {
+      _numa_nodes[i]->free(p, size);
+      return;
+    }
+    i++;
+  }while(i < _node_count);
+no_numa:
+  FreeHeap(p);
+}
+
+void* CHeapObj::reallocate(void* old, size_t size, int lgrp_id) {
+  //Not yet implemented.
+  return NULL;
+}
+//keep numa-aware new separate from simple one for now. Its not possible
+//to call dellete without size for numa-aware implementation.
+void* CHeapObj::operator new(size_t size, int lgrp_id){
+  return allocate(size, lgrp_id);
+}
+
+void CHeapObj::operator delete(void* p, size_t size) {
+  free(p, size);
+}
+#endif
+
 void* CHeapObj::operator new(size_t size){
   return (void *) AllocateHeap(size, "CHeapObj-new");
 }

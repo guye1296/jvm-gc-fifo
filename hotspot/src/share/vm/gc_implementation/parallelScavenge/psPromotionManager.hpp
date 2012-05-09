@@ -162,9 +162,11 @@ class PSPromotionManager : public CHeapObj {
     return stack_array_depth()->steal(queue_num, seed, t);
   }
 #endif
-
+#ifdef NUMA_AWARE_C_HEAP
+  PSPromotionManager(int lgrp_id = -1);
+#else
   PSPromotionManager();
-
+#endif
   // Accessors
   OopStarTaskQueue* claimed_stack_depth() {
     return &_claimed_stack_depth;

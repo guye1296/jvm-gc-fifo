@@ -272,7 +272,9 @@ public:
   GenericTaskQueue();
 
   void initialize();
-
+#ifdef NUMA_AWARE_C_HEAP
+  void initialize(int lgrp_id);
+#endif
   // Push the task "t" on the queue.  Returns "false" iff the queue is full.
   inline bool push(E t);
 
@@ -305,6 +307,12 @@ template<class E, unsigned int N>
 void GenericTaskQueue<E, N>::initialize() {
   _elems = NEW_C_HEAP_ARRAY(E, N);
 }
+#ifdef NUMA_AWARE_C_HEAP
+template<class E, unsigned int N>
+void GenericTaskQueue<E, N>::initialize(int lgrp_id) {
+  _elems = NUMA_NEW_C_HEAP_ARRAY(E, N, lgrp_id);
+}
+#endif
 
 template<class E, unsigned int N>
 void GenericTaskQueue<E, N>::oops_do(OopClosure* f) {
@@ -398,6 +406,11 @@ bool GenericTaskQueue<E, N>::pop_global(E& t) {
 
 template<class E, unsigned int N>
 GenericTaskQueue<E, N>::~GenericTaskQueue() {
+#ifdef NUMA_AWARE_C_HEAP
+  if (UseNUMA)
+    NUMA_FREE_C_HEAP_ARRAY(E, _elems, N);
+  else
+#endif
   FREE_C_HEAP_ARRAY(E, _elems);
 }
 
@@ -489,7 +502,11 @@ public:
     if(affinity >= 0) {
       _affinity = new (ResourceObj::C_HEAP) GrowableArray<GrowableArray<uint>*>(affinity, true);
       for (int i = 0; i < affinity; i++) {
+#ifdef NUMA_AWARE_C_HEAP
+        _affinity->append(new ((uint) i) GrowableArray<uint>(ParallelGCThreads / affinity, true, i));
+#else
         _affinity->append(new (ResourceObj::C_HEAP) GrowableArray<uint>(0, true));
+#endif
       }
     } else
       _affinity = NULL;

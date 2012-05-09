@@ -64,8 +64,13 @@ void OopRecorder::maybe_initialize() {
       _handles  = new(_arena) GrowableArray<jobject>(_arena, 10, 0, 0);
       _no_finds = new(_arena) GrowableArray<int>(    _arena, 10, 0, 0);
     } else {
+#ifdef NUMA_AWARE_C_HEAP
+      _handles  = new GrowableArray<jobject>(10);
+      _no_finds = new GrowableArray<int>(    10);
+#else
       _handles  = new GrowableArray<jobject>(10, 0, 0);
       _no_finds = new GrowableArray<int>(    10, 0, 0);
+#endif
     }
   }
 }

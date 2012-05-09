@@ -105,6 +105,10 @@ class Thread: public ThreadShadow {
  public:
   void* operator new(size_t size);
   void  operator delete(void* p);
+#ifdef NUMA_AWARE_C_HEAP
+  void* operator new(size_t size, int lgrp_id);
+  void  operator delete(void* p, size_t size);
+#endif
  private:
 
   // ***************************************************************

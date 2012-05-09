@@ -88,6 +88,12 @@ void Stack<E>::clear(bool clear_cache)
 template <class E>
 size_t Stack<E>::default_segment_size()
 {
+#ifdef NUMA_AWARE_C_HEAP
+  if (UseNUMA) {
+    size_t size = (os::vm_page_size() - sizeof(E*)) / sizeof(E);
+    return size;
+  }
+#endif
   // Number of elements that fit in 4K bytes minus the size of two pointers
   // (link field and malloc header).
   return (4096 - 2 * sizeof(E*)) / sizeof(E);
@@ -139,12 +145,24 @@ E* Stack<E>::set_link(E* new_seg, E* old_seg)
 template <class E>
 E* Stack<E>::alloc(size_t bytes)
 {
+#ifdef NUMA_AWARE_C_HEAP
+  if (UseNUMA) {
+    E* e = (E*) NUMA_NEW_C_HEAP_ARRAY(char, bytes,
+                    Thread::current()->lgrp_id());
+    return e;
+  }
+#endif
   return (E*) NEW_C_HEAP_ARRAY(char, bytes);
 }
 
 template <class E>
 void Stack<E>::free(E* addr, size_t bytes)
 {
+#ifdef NUMA_AWARE_C_HEAP
+  if (UseNUMA) {
+    NUMA_FREE_C_HEAP_ARRAY(char, (char*) addr, bytes);
+  } else
+#endif
   FREE_C_HEAP_ARRAY(char, (char*) addr);
 }
 

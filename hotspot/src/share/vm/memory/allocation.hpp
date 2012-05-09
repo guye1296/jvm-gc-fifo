@@ -40,6 +40,9 @@
 #define ARENA_ALIGN_MASK (~((size_t)ARENA_ALIGN_M1))
 #define ARENA_ALIGN(x) ((((size_t)(x)) + ARENA_ALIGN_M1) & ARENA_ALIGN_MASK)
 
+#ifdef NUMA_AWARE_C_HEAP
+class NUMACHeap;
+#endif
 // All classes in the virtual machine must be subclassed
 // by one of the following allocation classes:
 //
@@ -99,11 +102,23 @@ class AllocatedObj {
 #endif
 
 class CHeapObj ALLOCATION_SUPER_CLASS_SPEC {
+#ifdef NUMA_AWARE_C_HEAP
+  static NUMACHeap** _numa_nodes;
+  static int _node_count;
+#endif
  public:
   void* operator new(size_t size);
   void* operator new (size_t size, const std::nothrow_t&  nothrow_constant);
   void  operator delete(void* p);
   void* new_array(size_t size);
+#ifdef NUMA_AWARE_C_HEAP
+  void* operator new (size_t size, int lgrp_id);
+  void  operator delete(void* p, size_t size);
+  static void initialize();
+  static void* allocate(size_t size, int lgrp_id);
+  static void* reallocate(void* old, size_t size, int lgrp_id = -1);
+  static void free(void* p, size_t size);
+#endif
 };
 
 // Base class for objects allocated on the stack only.
@@ -416,6 +431,20 @@ class ResourceObj ALLOCATION_SUPER_CLASS_SPEC {
 
 #define NEW_C_HEAP_OBJ(type)\
   NEW_C_HEAP_ARRAY(type, 1)
+
+#ifdef NUMA_AWARE_C_HEAP 
+#define NUMA_NEW_C_HEAP_ARRAY(type, size, lgrp_id)\
+  (type*) (CHeapObj::allocate((size) * sizeof(type), lgrp_id))
+
+#define NUMA_REALLOC_C_HEAP_ARRAY(type, old, size, lgrp_id)\
+  (type*) (CHeapObj::reallocate((void*)old, (size) * sizeof(type), lgrp_id))
+
+#define NUMA_NEW_C_HEAP_OBJ(type, lgrp_id)\
+  NUMA_NEW_C_HEAP_OBJ(type, 1, lgrp_id)
+
+#define NUMA_FREE_C_HEAP_ARRAY(type, old, size) \
+  CHeapObj::free((void*)old, (size) * sizeof(type))
+#endif
 
 extern bool warn_new_operator;
 

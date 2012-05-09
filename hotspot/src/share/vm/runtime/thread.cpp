@@ -143,11 +143,21 @@ HS_DTRACE_PROBE_DECL5(hotspot, thread__stop, char*, intptr_t,
 // ======= Thread ========
 
 // Support for forcing alignment of thread objects for biased locking
+#ifdef NUMA_AWARE_C_HEAP
+void* Thread::operator new(size_t size, int lgrp_id) {
+#else
 void* Thread::operator new(size_t size) {
+#endif
   if (UseBiasedLocking) {
     const int alignment = markOopDesc::biased_lock_alignment;
     size_t aligned_size = size + (alignment - sizeof(intptr_t));
+#ifdef NUMA_AWARE_C_HEAP
+    void* real_malloc_addr = UseNUMA && lgrp_id >= 0 ? 
+                             CHeapObj::operator new(aligned_size, lgrp_id) :
+                             CHeapObj::operator new(aligned_size);
+#else
     void* real_malloc_addr = CHeapObj::operator new(aligned_size);
+#endif
     void* aligned_addr     = (void*) align_size_up((intptr_t) real_malloc_addr, alignment);
     assert(((uintptr_t) aligned_addr + (uintptr_t) size) <=
            ((uintptr_t) real_malloc_addr + (uintptr_t) aligned_size),
@@ -160,17 +170,44 @@ void* Thread::operator new(size_t size) {
     ((Thread*) aligned_addr)->_real_malloc_address = real_malloc_addr;
     return aligned_addr;
   } else {
+#ifdef NUMA_AWARE_C_HEAP
+    return UseNUMA && lgrp_id >= 0 ? CHeapObj::operator new(size, lgrp_id) :
+                                               CHeapObj::operator new(size);
+#else
     return CHeapObj::operator new(size);
+#endif
   }
 }
 
+#ifdef NUMA_AWARE_C_HEAP
+void* Thread::operator new(size_t size) {
+  return Thread::operator new(size, -1);
+}
+
 void Thread::operator delete(void* p) {
+  Thread::operator delete(p, 0);
+}
+
+void Thread::operator delete(void* p, size_t size) {
+#else
+void Thread::operator delete(void* p) {
+#endif
   if (UseBiasedLocking) {
+#ifdef NUMA_AWARE_C_HEAP
+    p = ((Thread*) p)->_real_malloc_address;
+#else
     void* real_malloc_addr = ((Thread*) p)->_real_malloc_address;
     CHeapObj::operator delete(real_malloc_addr);
   } else {
     CHeapObj::operator delete(p);
+#endif
   }
+#ifdef NUMA_AWARE_C_HEAP
+  if (UseNUMA && size > 0)
+    CHeapObj::operator delete(p, size);
+  else
+    CHeapObj::operator delete(p);
+#endif
 }
 
 
@@ -3050,6 +3087,11 @@ jint Threads::create_vm(JavaVMInitArgs* args, bool* canTryAgain) {
   jint os_init_2_result = os::init_2();
   if (os_init_2_result != JNI_OK) return os_init_2_result;
 
+#ifdef NUMA_AWARE_C_HEAP
+  if (UseNUMA) {
+    CHeapObj::initialize();
+  }
+#endif
   // Initialize output stream logging
   ostream_init_log();
 
@@ -3865,10 +3907,34 @@ void Threads::possibly_parallel_oops_do(OopClosure* f, CodeBlobClosure* cf) {
 #ifndef SERIALGC
 // Used by ParallelScavenge
 void Threads::create_thread_roots_tasks(GCTaskQueue* q) {
-  ALL_JAVA_THREADS(p) {
-    q->enqueue(new ThreadRootsTask(p));
+#ifdef NUMA_AWARE_C_HEAP
+  if (UseNUMA) {
+    ALL_JAVA_THREADS(p) {
+#ifdef REPLACE_MUTEX
+      q->enqueue(new (p->lgrp_id()) ThreadRootsTask(p));
+#else
+      q->enqueue(new (false, p->lgrp_id()) ThreadRootsTask(p));
+#endif
+    }
+  
+    if (VMThread::vm_thread()->lgrp_id() == -1) {
+      assert(Thread::current() == (Thread*)VMThread::vm_thread(), "should be in vm thread");
+      VMThread::vm_thread()->set_lgrp_id(os::numa_get_group_id());
+    }
+#ifdef REPLACE_MUTEX
+    q->enqueue(new (VMThread::vm_thread()->lgrp_id()) ThreadRootsTask(VMThread::vm_thread()));
+#else
+    q->enqueue(new (false, VMThread::vm_thread()->lgrp_id()) ThreadRootsTask(VMThread::vm_thread()));
+#endif
+  } else {
+#endif
+    ALL_JAVA_THREADS(p) {
+      q->enqueue(new ThreadRootsTask(p));
+    }
+    q->enqueue(new ThreadRootsTask(VMThread::vm_thread()));
+#ifdef NUMA_AWARE_C_HEAP
   }
-  q->enqueue(new ThreadRootsTask(VMThread::vm_thread()));
+#endif
 }
 
 // Used by Parallel Old

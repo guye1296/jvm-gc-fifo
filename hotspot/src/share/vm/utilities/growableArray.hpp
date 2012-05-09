@@ -75,8 +75,11 @@
 extern "C" {
   typedef int (*_sort_Fn)(const void *, const void *);
 }
-
+#ifdef NUMA_AWARE_C_HEAP
+class GenericGrowableArray : private ResourceObj, private CHeapObj {
+#else
 class GenericGrowableArray : public ResourceObj {
+#endif
  protected:
   int    _len;          // current length
   int    _max;          // maximum length
@@ -84,6 +87,9 @@ class GenericGrowableArray : public ResourceObj {
                         //   0 means default ResourceArea
                         //   1 means on C heap
                         //   otherwise, allocate in _arena
+#ifdef NUMA_AWARE_C_HEAP 
+  int _lgrp_id;
+#endif
 #ifdef ASSERT
   int    _nesting;      // resource area nesting at creation
   void   set_nesting();
@@ -100,13 +106,23 @@ class GenericGrowableArray : public ResourceObj {
 
   // This GA will use the resource stack for storage if c_heap==false,
   // Else it will use the C heap.  Use clear_and_deallocate to avoid leaks.
+#ifdef NUMA_AWARE_C_HEAP 
+  GenericGrowableArray(int initial_size, int initial_len, bool c_heap, int lgrp_id = -1) {
+#else
   GenericGrowableArray(int initial_size, int initial_len, bool c_heap) {
+#endif
     _len = initial_len;
     _max = initial_size;
     assert(_len >= 0 && _len <= _max, "initial_len too big");
     _arena = (c_heap ? (Arena*)1 : NULL);
     set_nesting();
+#ifdef NUMA_AWARE_C_HEAP
+    _lgrp_id = lgrp_id;
+    assert(lgrp_id != -1 || !on_C_heap() || allocated_on_C_heap(),
+           "growable array must be on C heap if elements are");
+#else
     assert(!on_C_heap() || allocated_on_C_heap(), "growable array must be on C heap if elements are");
+#endif
     assert(!on_stack() ||
            (allocated_on_res_area() || allocated_on_stack()),
            "growable array must be on stack if elements are not on arena and not on C heap");
@@ -124,6 +140,9 @@ class GenericGrowableArray : public ResourceObj {
     // on stack or embedded into an other object.
     assert(allocated_on_arena() || allocated_on_stack(),
            "growable array must be on arena or on stack if elements are on arena");
+#ifdef NUMA_AWARE_C_HEAP
+    _lgrp_id = -1;
+#endif
   }
 
   void* raw_allocate(int elementSize);
@@ -133,6 +152,24 @@ class GenericGrowableArray : public ResourceObj {
     assert(on_stack(), "fast ResourceObj path only");
     return (void*)resource_allocate_bytes(thread, elementSize * _max);
   }
+#ifdef NUMA_AWARE_C_HEAP
+ public:
+  void* operator new(size_t size) { return ResourceObj::operator new(size);}
+  void* operator new(size_t size, allocation_type type) {
+    return ResourceObj::operator new(size, type);
+  }
+  void* operator new(size_t size, Arena* arena) {
+    return ResourceObj::operator new(size, arena);
+  }
+  void operator delete(void* p) { ResourceObj::operator delete(p);}
+  //for numa-aware allocation.
+  void* operator new(size_t size, uint lgrp_id) {
+    return CHeapObj::operator new(size, (int) lgrp_id);
+  }
+  void operator delete(void* p, size_t size) {
+    CHeapObj::operator delete(p, size);
+  }
+#endif
 };
 
 template<class E> class GrowableArray : public GenericGrowableArray {
@@ -147,13 +184,21 @@ template<class E> class GrowableArray : public GenericGrowableArray {
     _data = (E*)raw_allocate(thread, sizeof(E));
     for (int i = 0; i < _max; i++) ::new ((void*)&_data[i]) E();
   }
-
+#ifndef NUMA_AWARE_C_HEAP
   GrowableArray(int initial_size, bool C_heap = false) : GenericGrowableArray(initial_size, 0, C_heap) {
+#else
+  GrowableArray(int initial_size, bool C_heap = false, int lgrp_id = -1) :
+                  GenericGrowableArray(initial_size, 0, C_heap, lgrp_id) {
+#endif
     _data = (E*)raw_allocate(sizeof(E));
     for (int i = 0; i < _max; i++) ::new ((void*)&_data[i]) E();
   }
-
+#ifndef NUMA_AWARE_C_HEAP
   GrowableArray(int initial_size, int initial_len, const E& filler, bool C_heap = false) : GenericGrowableArray(initial_size, initial_len, C_heap) {
+#else
+  GrowableArray(int initial_size, int initial_len, const E& filler, bool C_heap = false, int lgrp_id = -1) :
+                                          GenericGrowableArray(initial_size, initial_len, C_heap, lgrp_id) {
+#endif
     _data = (E*)raw_allocate(sizeof(E));
     int i = 0;
     for (; i < _len; i++) ::new ((void*)&_data[i]) E(filler);
@@ -334,6 +379,11 @@ template<class E> void GrowableArray<E>::grow(int j) {
     for (     ; i < _max; i++) ::new ((void*)&newData[i]) E();
     for (i = 0; i < old_max; i++) _data[i].~E();
     if (on_C_heap() && _data != NULL) {
+#ifdef NUMA_AWARE_C_HEAP
+      if (_lgrp_id > -1)
+        NUMA_FREE_C_HEAP_ARRAY(E, _data, old_max);
+      else
+#endif
       FreeHeap(_data);
     }
     _data = newData;
@@ -358,6 +408,11 @@ template<class E> void GrowableArray<E>::clear_and_deallocate() {
     clear();
     if (_data != NULL) {
       for (int i = 0; i < _max; i++) _data[i].~E();
+#ifdef NUMA_AWARE_C_HEAP
+      if (_lgrp_id > -1)
+        NUMA_FREE_C_HEAP_ARRAY(E, _data, _max);
+      else
+#endif
       FreeHeap(_data);
       _data = NULL;
     }

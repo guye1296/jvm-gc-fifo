@@ -260,6 +260,9 @@ class os: AllStatic {
   static size_t numa_get_leaf_groups(int *ids, size_t size);
   static bool   numa_topology_changed();
   static int    numa_get_group_id();
+#ifdef NUMA_AWARE_C_HEAP
+  static void*  numa_alloc_onnode(size_t size, int node);
+#endif
 
   // Page manipulation
   struct page_info {
