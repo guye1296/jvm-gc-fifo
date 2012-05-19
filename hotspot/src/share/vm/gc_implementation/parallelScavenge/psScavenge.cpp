@@ -31,6 +31,9 @@
 #include "gc_implementation/parallelScavenge/psAdaptiveSizePolicy.hpp"
 #include "gc_implementation/parallelScavenge/psMarkSweep.hpp"
 #include "gc_implementation/parallelScavenge/psParallelCompact.hpp"
+#ifdef INTER_NODE_MSG_Q
+#include "gc_implementation/parallelScavenge/psTaskTerminator.hpp"
+#endif
 #include "gc_implementation/parallelScavenge/psScavenge.inline.hpp"
 #include "gc_implementation/parallelScavenge/psTasks.hpp"
 #include "gc_implementation/shared/isGCActiveMark.hpp"
@@ -448,14 +451,27 @@ bool PSScavenge::invoke_no_policy() {
       q->enqueue(new ScavengeRootsTask(ScavengeRootsTask::system_dictionary));
       q->enqueue(new ScavengeRootsTask(ScavengeRootsTask::jvmti));
       q->enqueue(new ScavengeRootsTask(ScavengeRootsTask::code_cache));
+#ifdef INTER_NODE_MSG_Q
+#ifdef REPLACE_MUTEX
+        NUMAGlobalTerminator* terminator = gc_task_manager()->terminator(
+#else
+        NUMAGlobalTerminator terminator(
+#endif
+                                PSPromotionManager::numa_node_count(),
+                                (TaskQueueSetSuper*) promotion_manager->message_queue_set(),
+                                (TaskQueueSetSuper*) promotion_manager->stack_array_depth(),
+                                PSPromotionManager::terminator_list());
+#else
 #ifndef REPLACE_MUTEX
       ParallelTaskTerminator terminator(
 #else
       ParallelTaskTerminator* terminator =
                   gc_task_manager()->terminator(
-#endif
+#endif //!REPLACE_MUTEX
                   gc_task_manager()->workers(),
                   (TaskQueueSetSuper*) promotion_manager->stack_array_depth());
+#endif //INTER_NODE_MSG_Q
+
       if (ParallelGCThreads>1) {
         for (uint j=0; j<ParallelGCThreads; j++) {
 #ifndef REPLACE_MUTEX

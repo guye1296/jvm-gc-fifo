@@ -37,6 +37,15 @@
 #include "gc_implementation/parallelScavenge/gcTaskThread.hpp"
 #endif
 
+#ifdef INTER_NODE_MSG_Q
+#include "gc_implementation/shared/mutableNUMASpace.hpp"
+
+OopStarMessageQueueSet*      PSPromotionManager::_message_queue_set = NULL;
+OopStarMessageQueue**        PSPromotionManager::_numa_message_queues = NULL;
+uint                         PSPromotionManager::_numa_node_count = 0;
+HeapWord**                   PSPromotionManager::_eden_from_space_bottoms = NULL;
+GrowableArray<NUMANodeLocalTerminator*>* PSPromotionManager::_terminator_list = NULL;
+#endif
 PSPromotionManager**         PSPromotionManager::_manager_array = NULL;
 OopStarTaskQueueSet*         PSPromotionManager::_stack_array_depth = NULL;
 PSOldGen*                    PSPromotionManager::_old_gen = NULL;
@@ -52,10 +61,39 @@ void PSPromotionManager::initialize() {
   assert(_manager_array == NULL, "Attempt to initialize twice");
   _manager_array = NEW_C_HEAP_ARRAY(PSPromotionManager*, ParallelGCThreads+1 );
   guarantee(_manager_array != NULL, "Could not initialize promotion manager");
-#ifdef NUMA_AWARE_STEALING
-  if (UseNUMA)
+#if defined(NUMA_AWARE_STEALING) || defined(INTER_NODE_MSG_Q)
+  if (UseNUMA) {
+#ifdef INTER_NODE_MSG_Q
+    int j;
+    _numa_node_count = os::numa_get_groups_num();
+    _eden_from_space_bottoms = NUMA_NEW_C_HEAP_ARRAY(HeapWord*, 2 * _numa_node_count, -1);
+    _terminator_list = new (ResourceObj::C_HEAP) GrowableArray<NUMANodeLocalTerminator*>(_numa_node_count, true);
+    _numa_message_queues = NEW_C_HEAP_ARRAY(OopStarMessageQueue*, _numa_node_count * _numa_node_count);
+    _stack_array_depth = new OopStarTaskQueueSet(ParallelGCThreads, _numa_node_count);
+    _message_queue_set = new OopStarMessageQueueSet(_numa_node_count * (_numa_node_count - 1), _numa_node_count);
+    guarantee(_message_queue_set != NULL && _stack_array_depth != NULL,
+                              "Cound not initialize promotion manager");
+
+    for (int k = 0, i = 0; (uint) i < _numa_node_count; i++) {
+      _terminator_list->append(new(i) NUMANodeLocalTerminator(heap->gc_task_manager()->threads_on_node(i)));
+      for (j = 0; (uint) j < _numa_node_count; j++) {
+        uint n = (i * _numa_node_count) + j;
+        if (i == j) {
+          _numa_message_queues[n] = NULL;
+        } else {
+          _numa_message_queues[n] = new(i) OopStarMessageQueue(i, heap->gc_task_manager()->threads_on_node(j),
+                                                               heap->gc_task_manager()->threads_on_node(i));
+          _message_queue_set->register_queue(k++, _numa_message_queues[n], j);
+        }
+      }
+    }
+#endif
+#ifdef NUMA_AWARE_STEALING 
     _stack_array_depth = new OopStarTaskQueueSet(ParallelGCThreads, os::numa_get_groups_num());
-  else
+#else
+    _stack_array_depth = new OopStarTaskQueueSet(ParallelGCThreads);
+#endif
+  } else
 #endif
   _stack_array_depth = new OopStarTaskQueueSet(ParallelGCThreads);
   guarantee(_stack_array_depth != NULL, "Cound not initialize promotion manager");
@@ -66,15 +104,23 @@ void PSPromotionManager::initialize() {
     _manager_array[i] = new PSPromotionManager();
     guarantee(_manager_array[i] != NULL, "Could not create PSPromotionManager");
 #endif
-#ifdef NUMA_AWARE_STEALING
+#if defined(NUMA_AWARE_STEALING) || defined(INTER_NODE_MSG_Q)
     if (UseNUMA) {//set the lgrp_id same as the thread's on the queue as well.
       int lgrp_id = heap->gc_task_manager()->thread(i)->lgrp_id();
 #ifdef NUMA_AWARE_C_HEAP
       _manager_array[i] = new(lgrp_id) PSPromotionManager(lgrp_id);
       guarantee(_manager_array[i] != NULL, "Could not create PSPromotionManager");
 #endif
+#ifdef INTER_NODE_MSG_Q
+      _manager_array[i]->register_message_queues(_numa_message_queues +
+                                          (_numa_node_count * lgrp_id));
+#endif
+#ifdef NUMA_AWARE_STEALING
       stack_array_depth()->register_queue(i, _manager_array[i]->claimed_stack_depth(),
-                                          heap->gc_task_manager()->thread(i)->lgrp_id());
+                                                                             lgrp_id);
+#else
+      stack_array_depth()->register_queue(i, _manager_array[i]->claimed_stack_depth());
+#endif
     } else {
 #endif
 #ifdef NUMA_AWARE_C_HEAP
@@ -91,6 +137,10 @@ void PSPromotionManager::initialize() {
   // for work stealing.
   _manager_array[ParallelGCThreads] = new PSPromotionManager();
   guarantee(_manager_array[ParallelGCThreads] != NULL, "Could not create PSPromotionManager");
+#ifdef INTER_NODE_MSG_Q
+  if (UseNUMA)
+    _manager_array[ParallelGCThreads]->register_message_queues(NULL);
+#endif
 }
 
 PSPromotionManager* PSPromotionManager::gc_thread_promotion_manager(int index) {
@@ -109,7 +159,18 @@ void PSPromotionManager::pre_scavenge() {
   assert(heap->kind() == CollectedHeap::ParallelScavengeHeap, "Sanity");
 
   _young_space = heap->young_gen()->to_space();
-
+#ifdef INTER_NODE_MSG_Q
+  if (UseNUMA) {
+    MutableNUMASpace* from = (MutableNUMASpace*)heap->young_gen()->from_space();
+    MutableNUMASpace* eden = (MutableNUMASpace*)heap->young_gen()->eden_space();
+    for (int j = 0; j < from->lgrp_spaces()->length(); j++) {
+      _eden_from_space_bottoms[j] = eden->lgrp_spaces()->at(j)->space()->bottom();
+      _eden_from_space_bottoms[j + from->lgrp_spaces()->length()] = 
+                                    from->lgrp_spaces()->at(j)->space()->bottom();
+      
+    }
+  }
+#endif
   for(uint i=0; i<ParallelGCThreads+1; i++) {
     manager_array(i)->reset();
   }
@@ -228,6 +289,31 @@ void PSPromotionManager::reset() {
   TASKQUEUE_STATS_ONLY(reset_stats());
 }
 
+#ifdef INTER_NODE_MSG_Q
+void PSPromotionManager::drain_stacks(bool totally_drain) {
+  if (UseNUMA) {
+    uint idx = os::random() % (numa_node_count() - 1);
+    OopStarMessageQueue* q = message_queue_set()->queue_on_node(idx,
+                                      Thread::current()->lgrp_id());
+    StarTask p;
+    while(q->pop_global(p)) {
+#ifdef LOCAL_MSG_PER_THREAD
+      msg_t* m = (msg_t*)((oop*)p);
+      uint n = 0;
+      while (OopStarMessageQueue::dequeue(p, m, n)) {
+        process_popped_location_depth(p);
+      }
+#else
+     process_popped_location_depth(p);
+#endif
+    }
+  }
+  drain_stacks_depth(totally_drain);
+  if (UseNUMA) {
+    flush_msg_queues();
+  }
+}
+#endif
 
 void PSPromotionManager::drain_stacks_depth(bool totally_drain) {
   totally_drain = totally_drain || _totally_drain;

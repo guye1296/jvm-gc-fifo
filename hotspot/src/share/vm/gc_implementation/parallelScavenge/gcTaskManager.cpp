@@ -465,6 +465,15 @@ void GCTaskManager::initialize() {
   } else
     _numa_queues = NULL;
 #endif
+#ifdef INTER_NODE_MSG_Q
+  if (UseNUMA) {
+    _numa_terminator[0] = new(-1) NUMAGlobalTerminator(0, NULL, NULL, NULL);
+    _numa_terminator[1] = new(-1) NUMAGlobalTerminator(0, NULL, NULL, NULL);
+  } else {
+    _numa_terminator[0] = new NUMAGlobalTerminator(0, NULL, NULL, NULL);
+    _numa_terminator[1] = new NUMAGlobalTerminator(0, NULL, NULL, NULL);
+  }
+#endif //INTER_NODE_MSG_Q
   _terminator[0] = new ParallelTaskTerminator(0, NULL);
   _terminator[1] = new ParallelTaskTerminator(0, NULL);
 #endif
@@ -481,6 +490,20 @@ void GCTaskManager::initialize() {
       }
     }
     _thread = NEW_C_HEAP_ARRAY(GCTaskThread*, workers());
+#ifdef INTER_NODE_MSG_Q
+    if (UseNUMA) {
+      uint num_nodes = os::numa_get_groups_num();
+      _threads_per_node = NEW_C_HEAP_ARRAY(uint, num_nodes);
+      for (uint t = 0; t < num_nodes; _threads_per_node[t++] = 0);
+
+      for (uint t = 0; t < workers(); t += 1) {
+        uint node = os::Linux::get_node_by_cpu(processor_assignment[t]);
+        set_thread(t, GCTaskThread::create(this, t, processor_assignment[t]));
+        thread(t)->set_lgrp_id(node);
+        thread(t)->set_id_in_node(_threads_per_node[node]++);
+      }
+    } else
+#endif
     for (uint t = 0; t < workers(); t += 1) {
       set_thread(t, GCTaskThread::create(this, t, processor_assignment[t]));
     }
@@ -518,6 +541,10 @@ GCTaskManager::~GCTaskManager() {
     FREE_C_HEAP_ARRAY(GCTaskThread*, _thread);
     _thread = NULL;
   }
+#ifdef INTER_NODE_MSG_Q
+    FREE_C_HEAP_ARRAY(uint, _threads_per_node);
+    _threads_per_node = NULL;
+#endif
   if (_resource_flag != NULL) {
     FREE_C_HEAP_ARRAY(bool, _resource_flag);
     _resource_flag = NULL;
@@ -546,7 +573,16 @@ GCTaskManager::~GCTaskManager() {
 #endif
   delete _terminator[0];
   delete _terminator[1];
-#endif
+#ifdef INTER_NODE_MSG_Q
+  if (UseNUMA) {
+    CHeapObj::operator delete(_numa_terminator[0], sizeof(NUMAGlobalTerminator));
+    CHeapObj::operator delete(_numa_terminator[1], sizeof(NUMAGlobalTerminator));
+  } else {
+    delete _numa_terminator[0];
+    delete _numa_terminator[1];
+  }
+#endif // INTER_NODE_MSG_Q
+#endif // REPLACE_MUTEX
 }
 
 void GCTaskManager::print_task_time_stamps() {

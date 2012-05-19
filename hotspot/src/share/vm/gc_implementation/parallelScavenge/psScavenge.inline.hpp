@@ -69,7 +69,18 @@ template <class T>
 inline void PSScavenge::copy_and_push_safe_barrier(PSPromotionManager* pm,
                                                    T*                  p) {
   assert(should_scavenge(p, true), "revisiting object?");
+#ifdef INTER_NODE_MSG_Q
+  if (((NamedThread*)Thread::current())->_msg_q_enabled && pm->forward_to_numa_node(p)) {
+    return;
+  }
+  copy_and_push_safe_barrier_internal(pm, p);
+}
 
+template <class T>
+inline void PSScavenge::copy_and_push_safe_barrier_internal(PSPromotionManager* pm,
+                                                            T*                  p) {
+  assert(should_scavenge(p, true), "revisiting object?");
+#endif
   oop o = oopDesc::load_decode_heap_oop_not_null(p);
   oop new_obj = o->is_forwarded()
         ? o->forwardee()

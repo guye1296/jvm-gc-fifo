@@ -115,7 +115,9 @@ void ThreadRootsTask::do_it(GCTaskManager* manager, uint which) {
   PSPromotionManager* pm = PSPromotionManager::gc_thread_promotion_manager(which);
   PSScavengeRootsClosure roots_closure(pm);
   CodeBlobToOopClosure roots_in_blobs(&roots_closure, /*do_marking=*/ true);
-
+#ifdef INTER_NODE_MSG_Q
+  ((GCTaskThread*)Thread::current())->_msg_q_enabled = false;
+#endif
   if (_java_thread != NULL)
     _java_thread->oops_do(&roots_closure, &roots_in_blobs);
 
@@ -123,15 +125,18 @@ void ThreadRootsTask::do_it(GCTaskManager* manager, uint which) {
     _vm_thread->oops_do(&roots_closure, &roots_in_blobs);
 
   // Do the real work
+#ifdef INTER_NODE_MSG_Q
+  pm->drain_stacks_depth(true);
+  if (UseNUMA && !Thread::current()->is_VM_thread())
+    ((GCTaskThread*)Thread::current())->_msg_q_enabled = true;
+#else
   pm->drain_stacks(false);
+#endif
 }
 
 //
 // StealTask
 //
-
-StealTask::StealTask(ParallelTaskTerminator* t) :
-  _terminator(t) {}
 
 void StealTask::do_it(GCTaskManager* manager, uint which) {
   assert(Universe::heap()->is_gc_active(), "called outside gc");
@@ -143,30 +148,92 @@ void StealTask::do_it(GCTaskManager* manager, uint which) {
             "stacks should be empty at this point");
 
   int random_seed = 17;
-  while(true) {
+#ifdef INTER_NODE_MSG_Q
+  if (UseNUMA && numa_used()) {
+    intptr_t gen_counter = 0;
+    random_seed = os::random();
     StarTask p;
+    while(true) {
+      // First try to steal from the message queues.
+      while (PSPromotionManager::steal_depth_from_msg_queue(&random_seed,
+                                      p, Thread::current()->lgrp_id())) {
+#ifdef LOCAL_MSG_PER_THREAD
+        msg_t* m = (msg_t*)((oop*)p);
+        uint n = 0;
+        while (OopStarMessageQueue::dequeue(p, m, n)) {
+          TASKQUEUE_STATS_ONLY(pm->record_steal(p));
+          pm->process_popped_location_depth(p);
+        }
+        pm->drain_stacks_depth(true);
+      }
+#else // !LOCAL_MSG_PER_THREAD
+        TASKQUEUE_STATS_ONLY(pm->record_steal(p));
+        pm->process_popped_location_depth(p);
+      }
+      pm->drain_stacks_depth(true);
+#endif //LOCAL_MSG_PER_THREAD
+      pm->flush_msg_queues();
+      // Steal from local object queues now
 #ifdef NUMA_AWARE_STEALING
-    if (PSPromotionManager::steal_depth(which, &random_seed, p,
+      while(PSPromotionManager::steal_depth(which, &random_seed, p,
                                  Thread::current()->lgrp_id())) {
 #else
-    if (PSPromotionManager::steal_depth(which, &random_seed, p)) {
+      while(PSPromotionManager::steal_depth(which, &random_seed, p)) {
 #endif
-      TASKQUEUE_STATS_ONLY(pm->record_steal(p));
-      pm->process_popped_location_depth(p);
-      pm->drain_stacks_depth(true);
-    } else {
-      if (terminator()->offer_termination()) {
+        TASKQUEUE_STATS_ONLY(pm->record_steal(p));
+        pm->process_popped_location_depth(p);
+        pm->drain_stacks_depth(true);
+      }
+      pm->flush_msg_queues();
+      if (numa_terminator()->offer_termination(gen_counter)) {
         break;
       }
+    } //while(true)
+    if (((GCTaskThread*)Thread::current())->id_in_node() == 0) {
+      //uint i = ((GCTaskThread*)Thread::current())->id_in_node();
+      uint i = 0;
+      while(i < PSPromotionManager::numa_node_count()) {
+        if ((int)i != Thread::current()->lgrp_id()) {
+          pm->message_queue(i)->swap_free_lists();
+        }
+        //i += manager->threads_on_node(Thread::current()->lgrp_id());
+        i++;
+      }
     }
+  } else { //!UseNUMA
+#endif //INTER_NODE_MSG_Q
+    while(true) {
+      StarTask p;
+#ifdef NUMA_AWARE_STEALING
+      if (PSPromotionManager::steal_depth(which, &random_seed, p,
+                                 Thread::current()->lgrp_id())) {
+#else
+      if (PSPromotionManager::steal_depth(which, &random_seed, p)) {
+#endif
+        TASKQUEUE_STATS_ONLY(pm->record_steal(p));
+        pm->process_popped_location_depth(p);
+        pm->drain_stacks_depth(true);
+      } else {
+        if (terminator()->offer_termination()) {
+          break;
+        }
+      }
+    }
+#ifdef INTER_NODE_MSG_Q
   }
+#endif
   guarantee(pm->stacks_empty(), "stacks should be empty at this point");
 }
 
 #ifdef TERMINATOR_GCTASK
 void TerminatorTask::do_it(GCTaskManager* manager, uint which) {
   assert(Universe::heap()->is_gc_active(), "called outside gc");
-
+#ifdef INTER_NODE_MSG_Q
+  if (numa_used()) {
+    intptr_t gen_counter = 0;
+    numa_terminator()->offer_termination(gen_counter);
+  } else
+#endif
   terminator()->offer_termination();
 }
 #endif

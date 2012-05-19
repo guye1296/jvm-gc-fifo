@@ -42,7 +42,9 @@ class MutableSpace;
 class PSOldGen;
 class Thread;
 class VMThread;
-
+#ifdef INTER_NODE_MSG_Q
+class NUMAGlobalTerminator;
+#endif
 //
 // ScavengeRootsTask
 //
@@ -107,14 +109,31 @@ class ThreadRootsTask : public GCTask {
 
 class StealTask : public GCTask {
  private:
+#ifdef INTER_NODE_MSG_Q
+   union {
+     NUMAGlobalTerminator* const _numa_terminator;
+     ParallelTaskTerminator* const _terminator;
+   };
+   bool _numa_used;
+#else
    ParallelTaskTerminator* const _terminator;
+#endif
  public:
+#ifdef TERMINATOR_GCTASK
+  virtual
+#endif
   char* name() { return (char *)"steal-task"; }
+#ifdef INTER_NODE_MSG_Q
+  StealTask(NUMAGlobalTerminator* t) : _numa_terminator(t), _numa_used(true) {}
 
-  StealTask(ParallelTaskTerminator* t);
+  NUMAGlobalTerminator* numa_terminator() { return _numa_terminator; }
+  StealTask(ParallelTaskTerminator* t) : _terminator(t), _numa_used(false) {}
+  bool numa_used() { return _numa_used; }
+#else
+  StealTask(ParallelTaskTerminator* t) : _terminator(t) {}
+#endif
 
   ParallelTaskTerminator* terminator() { return _terminator; }
-
   virtual void do_it(GCTaskManager* manager, uint which);
 };
 
@@ -122,11 +141,12 @@ class StealTask : public GCTask {
 // This task is very similar to StealTask except that it only has
 // the terminator implemented
 class TerminatorTask : public StealTask {
-public:
-  char* name() { return (char *)"Terminator-task"; }
-
+ public:
   TerminatorTask(ParallelTaskTerminator* t) : StealTask(t) {}
-
+#ifdef INTER_NODE_MSG_Q
+  TerminatorTask(NUMAGlobalTerminator* t) : StealTask(t) {}
+#endif
+  char* name() { return (char *)"Terminator-task"; }
   virtual void do_it(GCTaskManager* manager, uint which);
 };
 #endif

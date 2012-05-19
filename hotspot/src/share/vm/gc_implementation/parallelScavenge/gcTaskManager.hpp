@@ -31,6 +31,9 @@
 #ifdef REPLACE_MUTEX
 #include "utilities/taskqueue.hpp"
 #endif
+#ifdef INTER_NODE_MSG_Q
+#include "gc_implementation/parallelScavenge/psTaskTerminator.hpp"
+#endif
 //
 // The GCTaskManager is a queue of GCTasks, and accessors
 // to allow the queue to be accessed from many threads.
@@ -353,13 +356,19 @@ private:
   GrowableArray<GCTaskQueue*>* _numa_queues;    // This is a list of NUMA queues.
                                                 // The above list is for non-affine tasks.
 #endif
-  ParallelTaskTerminator*  _terminator[2];
+#ifdef INTER_NODE_MSG_Q
+  NUMAGlobalTerminator*     _numa_terminator[2];
+#endif
+  ParallelTaskTerminator*   _terminator[2];
   uint                      _terminator_idx;
 #else
   Monitor*                  _monitor;           // Notification of changes.
   SynchronizedGCTaskQueue*  _queue;             // Queue of tasks.
   NoopGCTask*               _noop_task;         // The NoopGCTask instance.
   uint                      _noop_tasks;        // Count of noop tasks.
+#endif
+#ifdef INTER_NODE_MSG_Q
+  uint*                     _threads_per_node;  // Array holding number of threads per node.
 #endif
   GCTaskThread**            _thread;            // Array of worker threads.
   uint                      _busy_workers;      // Number of busy workers.
@@ -386,6 +395,11 @@ public:
   uint busy_workers() const {
     return _busy_workers;
   }
+#ifdef INTER_NODE_MSG_Q
+  uint threads_on_node(uint node) {
+    return _threads_per_node[node];
+  }
+#endif
 #ifndef REPLACE_MUTEX
   //     Pun between Monitor* and Mutex*
   Monitor* monitor() const {
@@ -395,6 +409,15 @@ public:
     return _monitor;
   }
 #else
+#ifdef INTER_NODE_MSG_Q
+  NUMAGlobalTerminator* terminator(intptr_t tc, TaskQueueSetSuper* msg_qs,
+                                   TaskQueueSetSuper* local_qs,
+                                   GrowableArray<NUMANodeLocalTerminator*>* nt) {
+    _terminator_idx %= 2;
+    _numa_terminator[_terminator_idx]->initialize(tc, msg_qs, local_qs, nt);
+    return _numa_terminator[_terminator_idx++];
+  }
+#endif
   ParallelTaskTerminator* terminator(int n_threads, TaskQueueSetSuper* queue_set) {
     _terminator_idx %= 2;
     _terminator[_terminator_idx]->initialize(n_threads, queue_set);

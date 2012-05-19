@@ -527,6 +527,12 @@ public:
 
   T* queue(uint n);
 
+#ifdef INTER_NODE_MSG_Q
+  // To support working on queues during drain_stacks()
+  // The n here is not the same as n in queue() fun above.
+  // This n gives the index within the affinity array.
+  T* queue_on_node(uint n, int affinity);
+#endif
   // The thread with queue number "queue_num" (and whose random number seed is
   // at "seed") is trying to steal a task from some other queue.  (It may try
   // several queues, according to some configuration parameter.)  If some steal
@@ -540,6 +546,14 @@ public:
   void register_queue(uint i, T* q, int affinity = -1);
 #endif
 };
+
+#ifdef INTER_NODE_MSG_Q
+template<class T> T*
+GenericTaskQueueSet<T>::queue_on_node(uint n, int affinity) {
+  assert(affinity >= 0, "sanity");
+  return _queues[_affinity->at(affinity)->at(n)];
+}
+#endif
 
 template<class T> void
 #ifdef NUMA_AWARE_STEALING
@@ -571,22 +585,40 @@ GenericTaskQueueSet<T>::steal(uint queue_num, int* seed, E& t) {
 #endif
 #ifdef NUMA_AWARE_STEALING
   if (affinity >= 0) {
+#ifdef INTER_NODE_MSG_Q
+    int s = *seed;
+#endif
     uint n = _affinity->at(affinity)->length();
     for (uint i = 0; i < 2 * n; i++) {
+#ifdef INTER_NODE_MSG_Q
+      if (steal_1_random(queue_num, &s, t, affinity)) {
+#else
       if (steal_1_random(queue_num, seed, t, affinity)) {
+#endif
+#ifndef INTER_NODE_MSG_Q
         TASKQUEUE_STATS_ONLY(queue(queue_num)->stats.record_steal(true));
+#endif
         return true;
       }
+#ifdef INTER_NODE_MSG_Q
+      *seed = s;
+#endif
     }
   } else
 #endif
   for (uint i = 0; i < 2 * _n; i++) {
+#ifdef INTER_NODE_MSG_Q
+    if (steal_1_random(queue_num, seed, t)) {
+#else
     if (steal_best_of_2(queue_num, seed, t)) {
+#endif
       TASKQUEUE_STATS_ONLY(queue(queue_num)->stats.record_steal(true));
       return true;
     }
   }
+#ifndef INTER_NODE_MSG_Q
   TASKQUEUE_STATS_ONLY(queue(queue_num)->stats.record_steal(false));
+#endif
   return false;
 }
 #ifdef NUMA_AWARE_STEALING
@@ -727,6 +759,9 @@ GenericTaskQueueSet<T>::steal_best_of_2(uint queue_num, int* seed, E& t) {
   }
 }
 
+#ifdef NUMA_AWARE_STEALING 
+#include "runtime/thread.hpp"
+#endif
 template<class T>
 bool GenericTaskQueueSet<T>::peek() {
 #ifdef NUMA_AWARE_STEALING 
@@ -882,9 +917,13 @@ typedef GenericTaskQueueSet<OopTaskQueue> OopTaskQueueSet;
 // to determine which should be processed.
 class StarTask {
   void*  _holder;        // either union oop* or narrowOop*
-
+#ifdef INTER_NODE_MSG_Q
+// This change will not work on 32-bit machines. It assumes that that msb of
+// 64-bit addresses are unused.
+#define COMPRESSED_OOP_MASK 0x8000000000000000UL //1 << 63
+#else
   enum { COMPRESSED_OOP_MASK = 1 };
-
+#endif
  public:
   StarTask(narrowOop* p) {
     assert(((uintptr_t)p & COMPRESSED_OOP_MASK) == 0, "Information loss!");
@@ -909,10 +948,350 @@ class StarTask {
     return *this;
   }
 
+#ifdef INTER_NODE_MSG_Q
+  bool operator==(const void* v) {
+    return _holder == v;
+  }
+#endif
+
   bool is_narrow() const {
     return (((uintptr_t)_holder & COMPRESSED_OOP_MASK) != 0);
   }
 };
+
+#ifdef INTER_NODE_MSG_Q
+#define LOCAL_MSG_PER_THREAD
+#define CACHE_LINE_SIZE 64 //assuming cache line size to be 64B
+#define NUMAMESSAGE_ELEM_COUNT ((CACHE_LINE_SIZE/sizeof(void*)) - 1)
+
+#define NUMAMESSAGE_N_COUNT ((NUMAMESSAGE_ELEM_COUNT * sizeof(E))/sizeof(unsigned char))
+
+template<class E>
+class NUMAMessageQueue: public CHeapObj {
+public:
+  struct NUMAMessage {
+    E _t[NUMAMESSAGE_ELEM_COUNT];//For making use of complete cache line of 64B
+    NUMAMessage* volatile _next;
+  };
+  typedef NUMAMessage msg_t;
+private:
+  msg_t* volatile _tail;
+  msg_t* volatile _free_writeside;
+  msg_t** _local_writeside;
+  const uint _nb_writer_threads;
+  const uint _lgrp_id;
+  //New cacheline starts here.
+  msg_t* volatile _head __attribute__ ((aligned(CACHE_LINE_SIZE)));
+  msg_t *_free_readside;
+  const uint _nb_reader_threads;
+  msg_t** _local_readside;
+
+  void dequeue_free_message(msg_t** m);
+  void enqueue_free_message(msg_t* m);
+  void enqueue(msg_t* m);
+  msg_t* _enqueue(E t, msg_t* m);
+public:
+  typedef E element_type;
+  TASKQUEUE_STATS_ONLY(TaskQueueStats stats;)
+
+  bool dequeue(msg_t** m);
+  void flush_free_list();
+  void swap_free_lists();
+  bool is_empty();
+  NUMAMessageQueue(uint lgrp_id, uint reader_thread_count, uint writer_thread_count);
+  ~NUMAMessageQueue();
+  //To support stealing.
+  bool peek() { return !is_empty();}
+#ifdef LOCAL_MSG_PER_THREAD
+  static bool dequeue(E& t, msg_t* m, uint& n);
+  void flush_local(uint lgrp_id);
+  void enqueue(E t, int lgrp_id);
+  bool pop_global(E& t) {
+    msg_t* m;
+    if (dequeue(&m)) {
+      t = (oop*)m;
+      return true;
+    }
+    return false;
+  }
+#else
+  void flush_local();
+  void enqueue(E t);
+  bool dequeue(E& t);
+  bool pop_global(E& t) { return dequeue(t);}
+#endif
+} __attribute__ ((aligned(CACHE_LINE_SIZE)));
+
+typedef NUMAMessageQueue<StarTask>::NUMAMessage msg_t;
+
+template<class E>
+NUMAMessageQueue<E>::NUMAMessageQueue(uint lgrp_id, uint reader_thread_count,
+                                      uint writer_thread_count) :
+ _lgrp_id(lgrp_id), _nb_reader_threads(reader_thread_count),
+ _nb_writer_threads(writer_thread_count)
+{
+  guarantee(((uintptr_t)this & 0x3f) == 0, "sanity");
+  _head = (msg_t*) allocate(sizeof(msg_t), lgrp_id);
+  _head->_next = NULL;
+  _tail = _head;
+  _free_readside = (msg_t*)_head;
+  _free_writeside = NULL;
+#ifdef LOCAL_MSG_PER_THREAD
+  _local_writeside = _local_readside = NULL;
+#else
+  _local_writeside = (msg_t**) NUMA_NEW_C_HEAP_ARRAY(msg_t*, writer_thread_count,
+                                                            lgrp_id);
+  _local_readside = (msg_t**) NUMA_NEW_C_HEAP_ARRAY(msg_t*, reader_thread_count,
+                                                            lgrp_id);
+  memset(_local_writeside, 0, sizeof(msg_t*) * writer_thread_count);
+  memset(_local_readside, 0, sizeof(msg_t*) * reader_thread_count);
+#endif
+}
+
+template<class E>
+NUMAMessageQueue<E>::~NUMAMessageQueue()
+{
+  flush_free_list();
+#ifndef LOCAL_MSG_PER_THREAD
+  NUMA_FREE_C_HEAP_ARRAY(msg_t*, _local_readside, _nb_reader_threads);
+  NUMA_FREE_C_HEAP_ARRAY(msg_t*, _local_writeside, _nb_writer_threads);
+#endif
+}
+
+template<class E>
+void NUMAMessageQueue<E>::flush_free_list()
+{
+  msg_t* ptr = (msg_t*)_free_writeside;
+  while(_free_writeside) {
+    _free_writeside = ptr->_next;
+    free((void*)ptr, sizeof(msg_t));
+    ptr = (msg_t*)_free_writeside;
+  }
+  ptr = (msg_t*)_free_readside;
+  while(_free_readside) {
+    _free_readside = ptr->_next;
+    free((void*)ptr, sizeof(msg_t));
+    ptr = (msg_t*)_free_readside;
+  }
+}
+
+template<class E>
+void NUMAMessageQueue<E>::swap_free_lists()
+{
+  msg_t* ptr = (msg_t*)_free_writeside;
+  while(_free_writeside) {
+    _free_writeside = ptr->_next;
+    free((void*)ptr, sizeof(msg_t));
+    ptr = (msg_t*)_free_writeside;
+  }
+  _free_writeside = _free_readside->_next;
+  _free_readside->_next = NULL;
+  _head = _tail = _free_readside;
+}
+
+#include "gc_implementation/parallelScavenge/gcTaskThread.hpp"
+
+template<class E>
+bool NUMAMessageQueue<E>::is_empty()
+{
+#ifndef LOCAL_MSG_PER_THREAD
+  uint id = ((GCTaskThread*)Thread::current())->id_in_node();
+  assert(id < _nb_reader_threads, err_msg("sanity id:%u count:%u", id, _nb_reader_threads));
+  if (_local_readside[id])
+    return false;
+#endif
+  if (_head->_next) {
+    return false;
+  }
+  return true;
+}
+
+template<class E>
+void NUMAMessageQueue<E>::dequeue_free_message(msg_t** m)
+{
+  assert(Thread::current()->lgrp_id() == (int)_lgrp_id,
+         err_msg("sanity tid:%d id:%u",Thread::current()->lgrp_id(), _lgrp_id));
+
+  msg_t* msg = (msg_t*)_free_writeside;
+  if (msg == NULL) {
+    *m = (msg_t*)allocate(sizeof(msg_t), _lgrp_id);
+    return;
+  }
+  msg_t* next = (msg_t*)msg->_next;
+  while((next = (msg_t*)Atomic::cmpxchg_ptr(next, &_free_writeside, msg)) != msg) {
+    msg = next;
+    if (msg == NULL) {
+      *m = (msg_t*)allocate(sizeof(msg_t), _lgrp_id);
+      return;
+    }
+    next = (msg_t*)msg->_next;
+  }
+  *m = msg;
+  return;
+}
+
+template<class E>
+void NUMAMessageQueue<E>::enqueue_free_message(msg_t* m)
+{
+  msg_t* prev = (msg_t*)_free_readside;
+  msg_t* temp;
+  m->_next = prev;
+  while((temp = (msg_t*)Atomic::cmpxchg_ptr(m, &_free_readside, prev)) != prev) {
+    m->_next = prev = temp;
+  }
+}
+
+template<class E>
+#ifdef LOCAL_MSG_PER_THREAD
+void NUMAMessageQueue<E>::flush_local(uint lgrp_id)
+{
+  GCTaskThread* thread = (GCTaskThread*)Thread::current();
+  msg_t* m = thread->local_msg[lgrp_id];
+#else
+void NUMAMessageQueue<E>::flush_local()
+{
+  uint id = ((GCTaskThread*)Thread::current())->id_in_node();
+  assert(id < _nb_writer_threads, err_msg("sanity id:%u count:%u", id, _nb_writer_threads));
+  msg_t* m = _local_writeside[id];
+#endif
+  if (m == NULL)
+    return;
+  unsigned long* n = (unsigned long*)(&m->_next);
+  while (*n < NUMAMESSAGE_ELEM_COUNT) {
+    E t;
+    m->_t[*n] = t;
+    *n = *n + 1;
+  }
+  enqueue(m);
+#ifdef LOCAL_MSG_PER_THREAD
+  thread->local_msg[lgrp_id] = NULL;
+#else
+  _local_writeside[id] = NULL;
+#endif
+}
+
+#ifdef LOCAL_MSG_PER_THREAD
+template<class E>
+void NUMAMessageQueue<E>::enqueue(E t, int lgrp_id)
+{
+  GCTaskThread* thread = (GCTaskThread*)Thread::current();
+  thread->local_msg[lgrp_id] = _enqueue(t, thread->local_msg[lgrp_id]);
+}
+#else
+template<class E>
+void NUMAMessageQueue<E>::enqueue(E t)
+{
+  uint id = ((GCTaskThread*)Thread::current())->id_in_node();
+  assert(id < _nb_writer_threads, err_msg("sanity id:%u count:%u", id, _nb_writer_threads));
+  assert(!(t == NULL), "sanity");
+  _local_writeside[id] = _enqueue(t, _local_writeside[id]);
+}
+#endif
+
+template<class E>
+typename NUMAMessageQueue<E>::msg_t* NUMAMessageQueue<E>::_enqueue(E t, msg_t* m)
+{
+  unsigned long* n;
+  msg_t* ret = m;
+  if (m == NULL) {
+    dequeue_free_message(&m);
+    ret = m;
+    n = (unsigned long*)(&m->_next);
+    *n = 0;
+  } else {
+    n = (unsigned long*)(&m->_next);
+  }
+  if (*n == NUMAMESSAGE_ELEM_COUNT - 1) {
+    m->_t[NUMAMESSAGE_ELEM_COUNT - 1] = t;
+    enqueue(m);
+    ret = NULL;
+  } else {
+    m->_t[*n] = t;
+    *n = *n + 1;
+  }
+  return ret;
+}
+
+template<class E>
+void NUMAMessageQueue<E>::enqueue(msg_t* m)
+{
+  m->_next = NULL;
+  do {
+    msg_t* tail = (msg_t*)_tail;
+    msg_t* next = (msg_t*)tail->_next;
+    if (next == NULL) {
+      if (!Atomic::cmpxchg_ptr(m, &tail->_next, NULL)) {
+        Atomic::cmpxchg_ptr(m, &_tail, tail);
+        return;
+      }
+    } else {
+      Atomic::cmpxchg_ptr(next, &_tail, tail);
+    }
+  } while(true);
+}
+
+#ifdef LOCAL_MSG_PER_THREAD
+template<class E>
+bool NUMAMessageQueue<E>::dequeue(E& t, msg_t* m, uint& n)
+{
+  assert(m, "sanity");
+  if (n == NUMAMESSAGE_ELEM_COUNT) {
+    n = 0;
+    return false;
+  }
+  t = m->_t[n++];
+  if ( t == NULL) {
+    n = 0;
+    return false;
+  }
+  return true;
+}
+#else
+template<class E>
+bool NUMAMessageQueue<E>::dequeue(E& t)
+{ 
+  uint id = ((GCTaskThread*)Thread::current())->id_in_node();
+  assert(id < _nb_reader_threads, err_msg("sanity id:%u count:%u", id, _nb_reader_threads));
+  msg_t* m = _local_readside[id];
+  unsigned long* n;
+  if (m == NULL) {
+begin:
+    if (!dequeue(&m))
+      return false;
+    t = m->_t[0];
+    n = (unsigned long*)m;
+    *n = 1;
+    _local_readside[id] = m;
+  } else {
+    n = (unsigned long*)m;
+    t = m->_t[*n];
+    *n = *n + 1;
+    if (*n == NUMAMESSAGE_ELEM_COUNT) {
+       _local_readside[id] = NULL;
+    }
+  }
+  if (t == NULL) {
+    goto begin;
+  }
+  return true;
+}
+#endif
+
+template<class E>
+bool NUMAMessageQueue<E>::dequeue(msg_t** m)
+{
+  while(true) {
+    msg_t* head = (msg_t*)_head;
+    *m = (msg_t*)head->_next;
+    if (*m == NULL) {
+      return false;
+    }
+    if (Atomic::cmpxchg_ptr(*m, &_head, head) == head) {
+      return true;
+    }
+  }
+}
+#endif
 
 class ObjArrayTask
 {
@@ -951,7 +1330,10 @@ private:
 
 typedef OverflowTaskQueue<StarTask>           OopStarTaskQueue;
 typedef GenericTaskQueueSet<OopStarTaskQueue> OopStarTaskQueueSet;
-
+#ifdef INTER_NODE_MSG_Q
+typedef NUMAMessageQueue<StarTask>            OopStarMessageQueue;
+typedef GenericTaskQueueSet<OopStarMessageQueue> OopStarMessageQueueSet;
+#endif
 typedef OverflowTaskQueue<size_t>             RegionTaskQueue;
 typedef GenericTaskQueueSet<RegionTaskQueue>  RegionTaskQueueSet;
 

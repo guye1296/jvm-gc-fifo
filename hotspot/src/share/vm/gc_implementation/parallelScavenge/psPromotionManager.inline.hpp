@@ -57,7 +57,12 @@ inline void PSPromotionManager::claim_or_forward_depth(T* p) {
   assert(Universe::heap()->kind() == CollectedHeap::ParallelScavengeHeap,
          "Sanity");
   assert(Universe::heap()->is_in(p), "pointer outside heap");
-
+#ifdef INTER_NODE_MSG_Q
+  if (((NamedThread*)Thread::current())->_msg_q_enabled &&
+                                   forward_to_numa_node(p)) {
+    return;
+  }
+#endif
   claim_or_forward_internal_depth(p);
 }
 
@@ -69,9 +74,17 @@ inline void PSPromotionManager::process_popped_location_depth(StarTask p) {
   } else {
     if (p.is_narrow()) {
       assert(UseCompressedOops, "Error");
+#ifdef INTER_NODE_MSG_Q
+      PSScavenge::copy_and_push_safe_barrier_internal(this, (narrowOop*)p);
+#else
       PSScavenge::copy_and_push_safe_barrier(this, (narrowOop*)p);
+#endif
     } else {
+#ifdef INTER_NODE_MSG_Q
+      PSScavenge::copy_and_push_safe_barrier_internal(this, (oop*)p);
+#else
       PSScavenge::copy_and_push_safe_barrier(this, (oop*)p);
+#endif
     }
   }
 }

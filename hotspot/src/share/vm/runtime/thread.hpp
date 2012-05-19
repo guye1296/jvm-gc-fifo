@@ -645,6 +645,9 @@ class NamedThread: public Thread {
   JavaThread* _processed_thread;
 
  public:
+#ifdef INTER_NODE_MSG_Q
+  bool _msg_q_enabled;
+#endif
   NamedThread();
   ~NamedThread();
   // May only be called once per thread.

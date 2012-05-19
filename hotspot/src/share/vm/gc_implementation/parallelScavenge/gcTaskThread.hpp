@@ -26,7 +26,9 @@
 #define SHARE_VM_GC_IMPLEMENTATION_PARALLELSCAVENGE_GCTASKTHREAD_HPP
 
 #include "runtime/thread.hpp"
-
+#ifdef INTER_NODE_MSG_Q
+#include "utilities/taskqueue.hpp"
+#endif
 // Forward declarations of classes defined here.
 class GCTaskThread;
 class GCTaskTimeStamp;
@@ -46,8 +48,17 @@ private:
   uint _time_stamp_index;
 
   GCTaskTimeStamp* time_stamp_at(uint index);
-
+#ifdef INTER_NODE_MSG_Q
+  uint _id_in_node; // Maintains a thread id within node
  public:
+  msg_t** local_msg; // Msg holding a locally claimed msg.
+  bool _msg_q_enabled;
+
+  uint id_in_node()            { return _id_in_node;}
+  void set_id_in_node(uint id) { _id_in_node = id;}
+#else
+ public:
+#endif
   // Factory create and destroy methods.
   static GCTaskThread* create(GCTaskManager* manager,
                               uint           which,
@@ -56,6 +67,11 @@ private:
     if (UseNUMA) {
       int lgrp_id = os::Linux::get_node_by_cpu(processor_id);
       GCTaskThread* t = new(lgrp_id) GCTaskThread(manager, which, processor_id);
+#ifdef INTER_NODE_MSG_Q
+      int node_count = os::numa_get_groups_num();
+      t->local_msg = NUMA_NEW_C_HEAP_ARRAY(msg_t*, node_count, lgrp_id);
+      memset(t->local_msg, 0, sizeof(msg_t*) * node_count);
+#endif
       return t;
     }
 #endif
@@ -64,9 +80,12 @@ private:
   static void destroy(GCTaskThread* manager) {
     if (manager != NULL) {
 #ifdef NUMA_AWARE_C_HEAP
-      if (UseNUMA)
+      if (UseNUMA) {
+#ifdef INTER_NODE_MSG_Q
+        NUMA_FREE_C_HEAP_ARRAY(msg_t*, manager->local_msg, os::numa_get_groups_num());
+#endif
         Thread::operator delete(manager, sizeof(GCTaskThread));
-      else
+      } else
         Thread::operator delete(manager);
 #else
       delete manager;

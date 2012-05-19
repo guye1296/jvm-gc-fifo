@@ -136,7 +136,9 @@ class PSScavenge: AllStatic {
   template <class T> static inline bool should_scavenge(T* p, bool check_to_space);
 
   template <class T> inline static void copy_and_push_safe_barrier(PSPromotionManager* pm, T* p);
-
+#ifdef INTER_NODE_MSG_Q
+  template <class T> inline static void copy_and_push_safe_barrier_internal(PSPromotionManager* pm, T* p);
+#endif
   // Is an object in the young generation
   // This assumes that the HeapWord argument is in the heap,
   // so it only checks one side of the complete predicate.

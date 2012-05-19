@@ -28,7 +28,9 @@
 #include "gc_implementation/parallelScavenge/psPromotionLAB.hpp"
 #include "memory/allocation.hpp"
 #include "utilities/taskqueue.hpp"
-
+#ifdef INTER_NODE_MSG_Q
+#include "gc_implementation/parallelScavenge/psTaskTerminator.hpp"
+#endif
 //
 // psPromotionManager is used by a single thread to manage object survival
 // during a scavenge. The promotion manager contains thread local data only.
@@ -57,7 +59,13 @@ class PSPromotionManager : public CHeapObj {
   static OopStarTaskQueueSet*         _stack_array_depth;
   static PSOldGen*                    _old_gen;
   static MutableSpace*                _young_space;
-
+#ifdef INTER_NODE_MSG_Q
+  static OopStarMessageQueueSet*      _message_queue_set;
+  static OopStarMessageQueue**        _numa_message_queues;
+  static uint                         _numa_node_count;
+  static HeapWord**                   _eden_from_space_bottoms;
+  static GrowableArray<NUMANodeLocalTerminator*>* _terminator_list;
+#endif
 #if TASKQUEUE_STATS
   size_t                              _masked_pushes;
   size_t                              _masked_steals;
@@ -77,8 +85,11 @@ class PSPromotionManager : public CHeapObj {
   bool                                _old_gen_is_full;
 
   OopStarTaskQueue                    _claimed_stack_depth;
+#ifdef INTER_NODE_MSG_Q
+  OopStarMessageQueue**               _message_queues;
+#else
   OverflowTaskQueue<oop>              _claimed_stack_breadth;
-
+#endif
   bool                                _totally_drain;
   uint                                _target_stack_size;
 
@@ -110,8 +121,12 @@ class PSPromotionManager : public CHeapObj {
 
   // These are added to the taskqueue so PS_CHUNKED_ARRAY_OOP_MASK (or any
   // future masks) can't conflict with COMPRESSED_OOP_MASK
+#ifdef INTER_NODE_MSG_Q
+// Check comment on COMPRESSED_OOP_MASK in taskqueue.hpp
+#define PS_CHUNKED_ARRAY_OOP_MASK  0x4000000000000000UL //1 << 62
+#else
 #define PS_CHUNKED_ARRAY_OOP_MASK  0x2
-
+#endif
   bool is_oop_masked(StarTask p) {
     // If something is marked chunked it's always treated like wide oop*
     return (((intptr_t)(oop*)p) & PS_CHUNKED_ARRAY_OOP_MASK) ==
@@ -144,6 +159,9 @@ class PSPromotionManager : public CHeapObj {
 
  protected:
   static OopStarTaskQueueSet* stack_array_depth()   { return _stack_array_depth; }
+#ifdef INTER_NODE_MSG_Q
+  static OopStarMessageQueueSet* message_queue_set()   { return _message_queue_set; }
+#endif
  public:
   // Static
   static void initialize();
@@ -161,6 +179,62 @@ class PSPromotionManager : public CHeapObj {
   static bool steal_depth(int queue_num, int* seed, StarTask& t) {
     return stack_array_depth()->steal(queue_num, seed, t);
   }
+#endif
+#ifdef INTER_NODE_MSG_Q
+  static bool steal_depth_from_msg_queue(int* seed, StarTask& t, int affinity) {
+    return message_queue_set()->steal(~0, seed, t, affinity);
+  }
+
+  static OopStarMessageQueue* numa_message_queue(uint index) {
+    return _numa_message_queues[index];
+  }
+  static GrowableArray<NUMANodeLocalTerminator*>* terminator_list() {
+    return _terminator_list;
+  }
+  OopStarMessageQueue* message_queue(uint index) {
+    return _message_queues[index];
+  }
+  static uint numa_node_count() { return _numa_node_count;}
+
+  template <class T> inline bool forward_to_numa_node(T* p) {
+    assert(Thread::current()->lgrp_id() >= 0,
+           "lgrp_id should be set by now");
+    void* o = (void*) oopDesc::load_decode_heap_oop_not_null(p);
+    uint min = 0;
+    uint max = (numa_node_count() << 1) - 1;
+    uint mid;
+    while (min + 1 != max) {
+      mid = (min + max) >> 1;
+      if (_eden_from_space_bottoms[mid] > o)
+        max = mid;
+      else
+        min = mid;
+    }
+    min %= numa_node_count();
+    if (Thread::current()->lgrp_id() == (int) min)
+      return false;
+#ifdef NUMAMESSAGE_ELEM_COUNT
+    message_queue(min)->enqueue(p, min);
+#else
+    message_queue(min)->enqueue(p);
+#endif
+    return true;
+  }
+
+  inline void flush_msg_queues() {
+    if (_message_queues == NULL) return;
+    for (uint i = 0; i < numa_node_count(); i++) {
+      if (message_queue(i)) {
+#ifdef NUMAMESSAGE_ELEM_COUNT
+        message_queue(i)->flush_local(i);
+#else
+        message_queue(i)->flush_local();
+#endif
+      }
+    }
+  }
+
+  void register_message_queues(OopStarMessageQueue** qs) { _message_queues = qs;}
 #endif
 #ifdef NUMA_AWARE_C_HEAP
   PSPromotionManager(int lgrp_id = -1);
@@ -184,9 +258,13 @@ class PSPromotionManager : public CHeapObj {
   void reset();
 
   void flush_labs();
+#ifdef INTER_NODE_MSG_Q
+  void drain_stacks(bool totally_drain);
+#else
   void drain_stacks(bool totally_drain) {
     drain_stacks_depth(totally_drain);
   }
+#endif
  public:
   void drain_stacks_cond_depth() {
     if (claimed_stack_depth()->size() > _target_stack_size) {

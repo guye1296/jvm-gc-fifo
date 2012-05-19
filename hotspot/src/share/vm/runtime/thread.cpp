@@ -1105,6 +1105,9 @@ void JavaThread::allocate_threadObj(Handle thread_group, char* thread_name, bool
 NamedThread::NamedThread() : Thread() {
   _name = NULL;
   _processed_thread = NULL;
+#ifdef INTER_NODE_MSG_Q
+  _msg_q_enabled = false;
+#endif
 }
 
 NamedThread::~NamedThread() {
