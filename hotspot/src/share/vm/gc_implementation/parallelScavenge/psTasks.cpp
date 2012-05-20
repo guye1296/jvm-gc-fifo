@@ -137,7 +137,37 @@ void ThreadRootsTask::do_it(GCTaskManager* manager, uint which) {
 //
 // StealTask
 //
-
+#ifdef INTER_NODE_STEALING
+void StealTask::do_inter_node_stealing(PSPromotionManager* pm, uint node) {
+  assert(pm->stacks_empty(),
+         "stacks should be empty at this point");
+  int random_seed = os::random();
+  while(true) {
+    StarTask p;
+#ifdef LOCAL_MSG_PER_THREAD
+    msg_t* m;
+    while(pm->message_queue(node)->dequeue(&m)) {
+      pm->process_1_msg(m);
+#else
+    while(pm->message_queue(node)->dequeue(p)) {
+      pm->process_popped_location_depth(p);
+#endif
+      pm->drain_stacks_depth(true);
+    }
+    if (!PSPromotionManager::steal_depth(~0, &random_seed, p, node)) {
+      break;
+    }
+    do {
+      pm->process_popped_location_depth(p);
+      pm->drain_stacks_depth(true);
+    } while (PSPromotionManager::steal_depth(~0, &random_seed, p, node));
+    pm->flush_msg_queues();
+  }
+  pm->flush_msg_queues();
+  assert(pm->stacks_empty(),
+         "stacks should be empty at this point");
+}
+#endif 
 void StealTask::do_it(GCTaskManager* manager, uint which) {
   assert(Universe::heap()->is_gc_active(), "called outside gc");
 
@@ -150,7 +180,14 @@ void StealTask::do_it(GCTaskManager* manager, uint which) {
   int random_seed = 17;
 #ifdef INTER_NODE_MSG_Q
   if (UseNUMA && numa_used()) {
-    intptr_t gen_counter = 0;
+    intptr_t global_ts = 0;
+#ifdef INTER_NODE_STEALING
+    intptr_t claimed_node_map = 0;
+    intptr_t local_ts = 0;
+    intptr_t* msg_count = manager->thread(which)->msg_count;
+    assert(msg_count[Thread::current()->lgrp_id()] == 0, "sanity");
+    msg_count[Thread::current()->lgrp_id()] = -1;
+#endif
     random_seed = os::random();
     StarTask p;
     while(true) {
@@ -158,12 +195,16 @@ void StealTask::do_it(GCTaskManager* manager, uint which) {
       while (PSPromotionManager::steal_depth_from_msg_queue(&random_seed,
                                       p, Thread::current()->lgrp_id())) {
 #ifdef LOCAL_MSG_PER_THREAD
+#ifdef INTER_NODE_STEALING
+        pm->process_1_msg((msg_t*)((oop*)p));
+#else
         msg_t* m = (msg_t*)((oop*)p);
         uint n = 0;
         while (OopStarMessageQueue::dequeue(p, m, n)) {
           TASKQUEUE_STATS_ONLY(pm->record_steal(p));
           pm->process_popped_location_depth(p);
         }
+#endif
         pm->drain_stacks_depth(true);
       }
 #else // !LOCAL_MSG_PER_THREAD
@@ -185,10 +226,47 @@ void StealTask::do_it(GCTaskManager* manager, uint which) {
         pm->drain_stacks_depth(true);
       }
       pm->flush_msg_queues();
-      if (numa_terminator()->offer_termination(gen_counter)) {
+#ifdef INTER_NODE_STEALING
+      // 3rd and 4th level of stealing to come here. 3rd will be to steal from the queue going out.
+      // The queue will be selected according to the credit value according to the msg_counts.
+      // 4th level will be to steal from the local queues of the node selected in level 3.
+      if (!claimed_node_map) {
+        while (true) {
+          uint max = Thread::current()->lgrp_id();
+          for (uint i = 0; i < PSPromotionManager::numa_node_count(); i++) {
+            if (msg_count[i] > msg_count[max])
+              max = i;
+          }
+          if (msg_count[max] == -1) {
+            break;
+          } else {
+            msg_count[max] = -1;
+            if (numa_terminator()->terminator_on_node(Thread::current()->lgrp_id())->claim_node_for_steal(max)) {
+              //We succeeded in claiming a node for inter-node stealing
+              claimed_node_map |= 1 << max;
+              do_inter_node_stealing(pm, max);
+            }
+          }
+        }
+      } else {
+        for (uint i = 0; i < PSPromotionManager::numa_node_count(); i++) {
+          if (claimed_node_map & (1 << i)) {
+            do_inter_node_stealing(pm, i);
+          }
+        }
+      }
+      if (numa_terminator()->offer_termination(global_ts, local_ts, claimed_node_map)) {
+#else
+      if (numa_terminator()->offer_termination(global_ts)) {
+#endif
         break;
       }
     } //while(true)
+#if defined(LOCAL_MSG_PER_THREAD) && defined(INTER_NODE_STEALING)
+    for (uint i = 0; i < PSPromotionManager::numa_node_count(); i++) {
+      manager->thread(which)->msg_count[i] = 0;
+    }
+#endif
     if (((GCTaskThread*)Thread::current())->id_in_node() == 0) {
       //uint i = ((GCTaskThread*)Thread::current())->id_in_node();
       uint i = 0;
@@ -230,8 +308,14 @@ void TerminatorTask::do_it(GCTaskManager* manager, uint which) {
   assert(Universe::heap()->is_gc_active(), "called outside gc");
 #ifdef INTER_NODE_MSG_Q
   if (numa_used()) {
-    intptr_t gen_counter = 0;
-    numa_terminator()->offer_termination(gen_counter);
+    intptr_t global_ts = 0;
+#ifdef INTER_NODE_STEALING 
+    intptr_t local_ts = 0;
+    intptr_t claimed_node_map = 0;
+    numa_terminator()->offer_termination(global_ts, local_ts, claimed_node_map);
+#else
+    numa_terminator()->offer_termination(global_ts);
+#endif
   } else
 #endif
   terminator()->offer_termination();

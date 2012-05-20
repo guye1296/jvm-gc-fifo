@@ -291,6 +291,9 @@ void PSPromotionManager::reset() {
 
 #ifdef INTER_NODE_MSG_Q
 void PSPromotionManager::drain_stacks(bool totally_drain) {
+#ifdef INTER_NODE_STEALING
+  drain_stacks_depth(totally_drain);
+#endif
   if (UseNUMA) {
     uint idx = os::random() % (numa_node_count() - 1);
     OopStarMessageQueue* q = message_queue_set()->queue_on_node(idx,
@@ -298,20 +301,29 @@ void PSPromotionManager::drain_stacks(bool totally_drain) {
     StarTask p;
     while(q->pop_global(p)) {
 #ifdef LOCAL_MSG_PER_THREAD
+#ifdef INTER_NODE_STEALING
+      process_1_msg((msg_t*)((oop*)p));
+#else
       msg_t* m = (msg_t*)((oop*)p);
       uint n = 0;
       while (OopStarMessageQueue::dequeue(p, m, n)) {
         process_popped_location_depth(p);
       }
-#else
+#endif
+#else //!LOCAL_MSG_PER_THREAD
      process_popped_location_depth(p);
 #endif
+#ifdef INTER_NODE_STEALING
+      drain_stacks_depth(totally_drain);
+    }
+  }
+#else
     }
   }
   drain_stacks_depth(totally_drain);
-  if (UseNUMA) {
+#endif
+  if (UseNUMA)
     flush_msg_queues();
-  }
 }
 #endif
 

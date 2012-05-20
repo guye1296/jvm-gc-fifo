@@ -88,6 +88,15 @@ inline void PSPromotionManager::process_popped_location_depth(StarTask p) {
     }
   }
 }
+#if defined(LOCAL_MSG_PER_THREAD) && defined(INTER_NODE_STEALING)
+inline void PSPromotionManager::process_1_msg(msg_t* m) {
+  uint n = 0;
+  StarTask p;
+  while(OopStarMessageQueue::dequeue(p, m, n)) {
+    process_popped_location_depth(p);
+  }
+}
+#endif
 
 #if TASKQUEUE_STATS
 void PSPromotionManager::record_steal(StarTask& p) {

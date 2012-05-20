@@ -52,8 +52,9 @@ private:
   uint _id_in_node; // Maintains a thread id within node
  public:
   msg_t** local_msg; // Msg holding a locally claimed msg.
-  bool _msg_q_enabled;
-
+#ifdef INTER_NODE_STEALING
+  intptr_t* msg_count;
+#endif
   uint id_in_node()            { return _id_in_node;}
   void set_id_in_node(uint id) { _id_in_node = id;}
 #else
@@ -70,6 +71,10 @@ private:
 #ifdef INTER_NODE_MSG_Q
       int node_count = os::numa_get_groups_num();
       t->local_msg = NUMA_NEW_C_HEAP_ARRAY(msg_t*, node_count, lgrp_id);
+#ifdef INTER_NODE_STEALING
+      t->msg_count = NUMA_NEW_C_HEAP_ARRAY(intptr_t, node_count, lgrp_id);
+      memset(t->msg_count, 0, sizeof(intptr_t) * node_count);
+#endif
       memset(t->local_msg, 0, sizeof(msg_t*) * node_count);
 #endif
       return t;
@@ -83,6 +88,9 @@ private:
       if (UseNUMA) {
 #ifdef INTER_NODE_MSG_Q
         NUMA_FREE_C_HEAP_ARRAY(msg_t*, manager->local_msg, os::numa_get_groups_num());
+#ifdef INTER_NODE_STEALING
+        NUMA_FREE_C_HEAP_ARRAY(intptr_t, manager->msg_count, os::numa_get_groups_num());
+#endif
 #endif
         Thread::operator delete(manager, sizeof(GCTaskThread));
       } else

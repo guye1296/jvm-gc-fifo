@@ -55,7 +55,12 @@
   }                                                                            \
 
 // This handles phase 2 of 2 phase termination protocol
+#ifdef INTER_NODE_STEALING
+bool NUMAGlobalTerminator::offer_termination(intptr_t& g_ts, intptr_t& l_ts,
+                                                       intptr_t node_bitmap) {
+#else
 bool NUMAGlobalTerminator::offer_termination(intptr_t& ts) {
+#endif
   assert(_nb_terminating < _nb_threads, err_msg("sanity nbt:%ld", _nb_terminating));
   LOCAL_VAR_FOR_LOOPING
   intptr_t nb_threads = _nb_threads;
@@ -63,10 +68,17 @@ bool NUMAGlobalTerminator::offer_termination(intptr_t& ts) {
        _node_terminators->at(Thread::current()->lgrp_id());
   // Check first if in meantime some work has come. This is to support the while(true)
   // loop in the StealTask::do_it function.
+#ifdef INTER_NODE_STEALING
+  if (peek_for_non_leaders(node_bitmap))
+#else
   if (peek_in_queue_set())
+#endif
     return false;
-
+#ifdef INTER_NODE_STEALING
+  uint ret = _offer_termination(g_ts, l_ts, node_bitmap, local_terminator);
+#else
   uint ret = _offer_termination(ts, local_terminator);
+#endif
   if (ret == 2) {
     return true;
   } else if (ret == 0) {
@@ -75,8 +87,15 @@ bool NUMAGlobalTerminator::offer_termination(intptr_t& ts) {
     if (peek_in_msg_queue_set()) {
       // found work to do, go out
       Atomic::cmpxchg_ptr(0, &_nb_terminating, nb_threads);
+#ifdef INTER_NODE_STEALING
+      local_terminator->_timestamp = g_ts;
+      local_terminator->_claim_q_node_steal = 0;
+      local_terminator->_nb_terminating = 0;
+      local_terminator->_local_ts = ++l_ts;
+#else
       local_terminator->_timestamp = ts;
       Atomic::dec_ptr(&local_terminator->_nb_terminating);
+#endif
       return false;
     }
     if (Atomic::add_ptr(1, &_nb_finishing) == nb_threads) {
@@ -90,8 +109,15 @@ bool NUMAGlobalTerminator::offer_termination(intptr_t& ts) {
     }
     LOOPING_FOR_WAITING
     if (_nb_terminating < nb_threads) {
+#ifdef INTER_NODE_STEALING
+      local_terminator->_timestamp = g_ts;
+      local_terminator->_claim_q_node_steal = 0;
+      local_terminator->_nb_terminating = 0;
+      local_terminator->_local_ts = ++l_ts;
+#else
       local_terminator->_timestamp = ts;
       Atomic::dec_ptr(&local_terminator->_nb_terminating);
+#endif
       return false;
     }
   }
@@ -104,8 +130,14 @@ bool NUMAGlobalTerminator::offer_termination(intptr_t& ts) {
 
 // This handles phase 1 of 2 phase termination protocol
 // This version will not use local timestamps
+#ifdef INTER_NODE_STEALING
+uint NUMAGlobalTerminator::_offer_termination(intptr_t& g_ts, intptr_t& l_ts,
+                                              intptr_t node_bitmap,
+                                              NUMANodeLocalTerminator* local_terminator) {
+#else
 uint NUMAGlobalTerminator::_offer_termination(intptr_t& ts,
                   NUMANodeLocalTerminator* local_terminator) {
+#endif
   // prefetch will come here.
   LOCAL_VAR_FOR_LOOPING
   intptr_t nb_thread = local_terminator->_nb_threads;
@@ -113,12 +145,27 @@ uint NUMAGlobalTerminator::_offer_termination(intptr_t& ts,
          err_msg("sanity local_nbt:%ld", local_terminator->_nb_terminating));
 
   if (Atomic::add_ptr(1, &local_terminator->_nb_terminating) < nb_thread) {
+#ifdef INTER_NODE_STEALING
+    return non_leader_termination(g_ts, l_ts, node_bitmap, local_terminator);
+#else
     return non_leader_termination(ts, local_terminator);
+#endif
   } else { // I am the leader
     // Before doing the inter-node increment, check once more.
+#ifdef INTER_NODE_STEALING
+    assert(local_terminator->_local_ts == l_ts, "sanity");
+    local_terminator->_local_ts = ++l_ts;
+#endif
     assert(local_terminator->_nb_terminating == nb_thread, err_msg("sanity %ld", local_terminator->_nb_terminating));
+#ifdef INTER_NODE_STEALING
+    if (peek_for_leader()) {
+      local_terminator->_claim_q_node_steal = 0;
+      local_terminator->_nb_terminating = 0;
+      local_terminator->_local_ts = ++l_ts;
+#else
     if (peek_in_msg_queue_set()) {
       Atomic::dec_ptr(&local_terminator->_nb_terminating);
+#endif
       assert(local_terminator->_nb_terminating < nb_thread,
                 err_msg("sanity local_nbt:%ld", local_terminator->_nb_terminating));
       return 0;
@@ -128,24 +175,43 @@ uint NUMAGlobalTerminator::_offer_termination(intptr_t& ts,
               err_msg("sanity nbt:%ld", _nb_terminating));
     if (Atomic::add_ptr(1, &_nb_terminating) == global_nb_threads) {
       _nb_finishing = 0;
+#ifdef INTER_NODE_STEALING
+      _timestamp = ++g_ts;
+#else
       _timestamp = ++ts;
+#endif
       return 1;
     }
     // I am not the global leader. So just loop until someone gets elected as
     // global leader.
     while(true) {
+#ifdef INTER_NODE_STEALING
+      if (_timestamp > g_ts) {
+        g_ts = _timestamp;
+#else
       if (_timestamp > ts) {
         ts = _timestamp;
+#endif
         return 1;
       }
       LOOPING_FOR_WAITING
+#ifdef INTER_NODE_STEALING
+      if (peek_for_leader()) {
+#else
       if (peek_in_msg_queue_set()) {
+#endif
         intptr_t ret = _nb_terminating;
         while (ret < global_nb_threads) {
           intptr_t temp = Atomic::cmpxchg_ptr(ret - 1, &_nb_terminating, ret);
           if (temp == ret) {
             // we succedded
+#ifdef INTER_NODE_STEALING
+            local_terminator->_claim_q_node_steal = 0;
+            local_terminator->_nb_terminating = 0;
+            local_terminator->_local_ts = ++l_ts;
+#else
             Atomic::dec_ptr(&local_terminator->_nb_terminating);
+#endif
             return 0;
           }
           ret = temp;
@@ -156,8 +222,14 @@ uint NUMAGlobalTerminator::_offer_termination(intptr_t& ts,
 }
 
 // This handles node local termination. The non leader threads loops in here.
+#ifdef INTER_NODE_STEALING
+uint NUMAGlobalTerminator::non_leader_termination(intptr_t& g_ts, intptr_t& l_ts,
+                                                  intptr_t node_bitmap,
+                                                  NUMANodeLocalTerminator* local_terminator) {
+#else
 uint NUMAGlobalTerminator::non_leader_termination(intptr_t& ts,
                       NUMANodeLocalTerminator* local_terminator) {
+#endif
   LOCAL_VAR_FOR_LOOPING
   intptr_t nb_threads = local_terminator->_nb_threads;
   while(true) {
@@ -166,6 +238,19 @@ uint NUMAGlobalTerminator::non_leader_termination(intptr_t& ts,
     } 
     // We loop and do nothing.
     LOOPING_FOR_WAITING
+#ifdef INTER_NODE_STEALING
+    if (l_ts == local_terminator->_local_ts &&
+        local_terminator->_nb_terminating < nb_threads) {
+      // Check for work and get out if u find work.
+      if (peek_for_non_leaders(node_bitmap)) {
+        intptr_t ret = local_terminator->_nb_terminating;
+        while (l_ts == local_terminator->_local_ts && ret < nb_threads) {
+           intptr_t temp;
+           temp = Atomic::cmpxchg_ptr(ret - 1,
+                   &local_terminator->_nb_terminating, ret);
+          if (temp == ret) {
+            goto out;
+#else
     if (local_terminator->_nb_terminating < nb_threads) {
       // Check for work and get out if u find work.
       if (peek_in_queue_set()) {
@@ -177,11 +262,20 @@ uint NUMAGlobalTerminator::non_leader_termination(intptr_t& ts,
           if (temp == ret) {           
             ts = local_terminator->_timestamp;
             return 0;
+#endif
           }
           ret = temp;
         }
       }
     }
+#ifdef INTER_NODE_STEALING 
+    if (l_ts + 2 == local_terminator->_local_ts) {
+out:
+      l_ts = local_terminator->_local_ts;
+      g_ts = local_terminator->_timestamp;
+      return 0;
+    }
+#endif
   }
 }
 #endif //INTER_NODE_MSG_Q

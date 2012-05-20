@@ -256,7 +256,9 @@ class PSPromotionManager : public CHeapObj {
   oop oop_promotion_failed(oop obj, markOop obj_mark);
 
   void reset();
-
+#if defined(LOCAL_MSG_PER_THREAD) && defined(INTER_NODE_STEALING)
+  inline void process_1_msg(msg_t* m);
+#endif
   void flush_labs();
 #ifdef INTER_NODE_MSG_Q
   void drain_stacks(bool totally_drain);

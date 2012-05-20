@@ -476,6 +476,9 @@ protected:
 public:
   // Returns "true" if some TaskQueue in the set contains a task.
   virtual bool peek() = 0;
+#ifdef INTER_NODE_STEALING
+  virtual bool peek(int affinity) = 0;
+#endif
 };
 
 template<class T>
@@ -1165,6 +1168,9 @@ void NUMAMessageQueue<E>::flush_local()
   enqueue(m);
 #ifdef LOCAL_MSG_PER_THREAD
   thread->local_msg[lgrp_id] = NULL;
+#ifdef INTER_NODE_STEALING
+  thread->msg_count[lgrp_id]++;
+#endif
 #else
   _local_writeside[id] = NULL;
 #endif
@@ -1175,7 +1181,15 @@ template<class E>
 void NUMAMessageQueue<E>::enqueue(E t, int lgrp_id)
 {
   GCTaskThread* thread = (GCTaskThread*)Thread::current();
+#ifdef INTER_NODE_STEALING
+  msg_t* m = _enqueue(t, thread->local_msg[lgrp_id]);
+  if (!m) {
+    thread->msg_count[lgrp_id]++;
+  }
+  thread->local_msg[lgrp_id] = m;
+#else
   thread->local_msg[lgrp_id] = _enqueue(t, thread->local_msg[lgrp_id]);
+#endif
 }
 #else
 template<class E>

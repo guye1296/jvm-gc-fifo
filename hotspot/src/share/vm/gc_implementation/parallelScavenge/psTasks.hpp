@@ -44,6 +44,9 @@ class Thread;
 class VMThread;
 #ifdef INTER_NODE_MSG_Q
 class NUMAGlobalTerminator;
+#ifdef INTER_NODE_STEALING
+class PSPromotionManager;
+#endif
 #endif
 //
 // ScavengeRootsTask
@@ -87,7 +90,7 @@ class ThreadRootsTask : public GCTask {
   JavaThread* _java_thread;
   VMThread* _vm_thread;
  public:
-#ifdef NUMA_AWARE_TASKQ
+#if defined(NUMA_AWARE_TASKQ) || defined(NUMA_AWARE_C_HEAP)
   ThreadRootsTask(JavaThread* root) : _java_thread(root), _vm_thread(NULL), GCTask((uint) root->lgrp_id()) {}
   ThreadRootsTask(VMThread* root) : _java_thread(NULL), _vm_thread(root), GCTask((uint) root->lgrp_id()) {}
 #else
@@ -115,6 +118,9 @@ class StealTask : public GCTask {
      ParallelTaskTerminator* const _terminator;
    };
    bool _numa_used;
+#ifdef INTER_NODE_STEALING
+   void do_inter_node_stealing(PSPromotionManager* pm, uint node);
+#endif
 #else
    ParallelTaskTerminator* const _terminator;
 #endif

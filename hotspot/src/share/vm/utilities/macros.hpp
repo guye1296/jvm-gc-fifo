@@ -34,14 +34,20 @@
 #define THREAD_AFFINITY
 #define NUMA_AWARE_STEALING
 #define NUMA_AWARE_C_HEAP
+#define EXTRA_COUNTERS
+
 #ifdef REPLACE_MUTEX
 #define NUMA_AWARE_TASKQ
 #define TERMINATOR_GCTASK
 #endif
+
 #if defined(YOUNGGEN_8TIMES) && defined(NUMA_AWARE_C_HEAP)
 #define INTER_NODE_MSG_Q
 #endif
-#define EXTRA_COUNTERS
+
+#if defined(INTER_NODE_MSG_Q)
+#define INTER_NODE_STEALING
+#endif
 
 // Makes a string of the argument (which is not macro-expanded)
 #define STR(a)  #a
