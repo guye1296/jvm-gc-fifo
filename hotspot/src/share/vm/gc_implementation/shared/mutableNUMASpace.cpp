@@ -92,7 +92,11 @@ void MutableNUMASpace::ensure_parsability() {
     MutableSpace *s = ls->space();
     if (s->top() < top()) { // For all spaces preceding the one containing top()
       if (s->free_in_words() > 0) {
+#ifdef OPTIMIZE_RESIZE
+        size_t area_touched_words = pointer_delta(s->no_resize_threshold(), s->top());
+#else
         size_t area_touched_words = pointer_delta(s->end(), s->top());
+#endif
         CollectedHeap::fill_with_object(s->top(), area_touched_words);
 #ifndef ASSERT
         if (!ZapUnusedHeapArea) {
@@ -120,11 +124,19 @@ void MutableNUMASpace::ensure_parsability() {
     } else {
       if (!os::numa_has_static_binding()) {
 #ifdef ASSERT
+#ifdef OPTIMIZE_RESIZE
+        MemRegion invalid(s->top(), s->no_resize_threshold());
+#else
         MemRegion invalid(s->top(), s->end());
+#endif
         ls->add_invalid_region(invalid);
 #else
         if (ZapUnusedHeapArea) {
+#ifdef OPTIMIZE_RESIZE
+          MemRegion invalid(s->top(), s->no_resize_threshold());
+#else
           MemRegion invalid(s->top(), s->end());
+#endif
           ls->add_invalid_region(invalid);
         } else {
           return;
@@ -153,6 +165,15 @@ size_t MutableNUMASpace::free_in_words() const {
   return s;
 }
 
+#ifdef OPTIMIZE_RESIZE
+size_t MutableNUMASpace::capacity_in_words() const {
+  size_t s = 0;
+  for (int i = 0; i < lgrp_spaces()->length(); i++) {
+    s += lgrp_spaces()->at(i)->space()->capacity_in_words();
+  }
+  return s;
+}
+#endif
 
 size_t MutableNUMASpace::tlab_capacity(Thread *thr) const {
   guarantee(thr != NULL, "No thread");
@@ -542,6 +563,48 @@ void MutableNUMASpace::merge_regions(MemRegion new_region, MemRegion* intersecti
         }
 }
 
+#ifdef OPTIMIZE_RESIZE
+//_no_resize_threshold is suppose to hold the correct size for any chunk
+void MutableNUMASpace::set_no_resize_threshold(size_t size, bool clear_space, bool mangle_space) {
+  if (clear_space) {
+    clear(mangle_space);
+    //free_region(MemRegion(bottom(), end()));
+  }
+  size /= lgrp_spaces()->length();
+  int i;
+  for (i = 0; i < lgrp_spaces()->length(); i++) {
+    lgrp_spaces()->at(i)->space()->set_no_resize_threshold(size, clear_space, mangle_space);
+  }
+  HeapWord* bottom = lgrp_spaces()->at(i - 1)->space()->bottom();
+  MemRegion mr(bottom, size / HeapWordSize);
+  HeapWord* end = lgrp_spaces()->at(i - 1)->space()->end();
+  assert(mr.end() <= end, "something is wrong!");
+  _no_resize_threshold = mr.end();
+  _default_chunk_size = mr.byte_size();
+  _phys_chunk_threshold = (_default_chunk_size / os::numa_get_groups_num()) >> 2;
+  _default_chunk_size -= (_phys_chunk_threshold * os::numa_get_groups_num()) >> 1;
+}
+
+bool MutableNUMASpace::expand_no_resize_threshold(size_t size) {
+  int num_lgrp_spaces = lgrp_spaces()->length();
+  HeapWord* end = lgrp_spaces()->at(num_lgrp_spaces - 1)->space()->end();
+  if (_no_resize_threshold + (size / HeapWordSize) <= end) {
+    HeapWord* bottom = lgrp_spaces()->at(num_lgrp_spaces - 1)->space()->bottom();
+    _no_resize_threshold += size / HeapWordSize;
+    MemRegion mr(bottom, _no_resize_threshold);
+    _default_chunk_size = mr.byte_size();
+    _phys_chunk_threshold = (_default_chunk_size / os::numa_get_groups_num()) >> 2;
+    _default_chunk_size -= (_phys_chunk_threshold * os::numa_get_groups_num()) >> 1;
+    for (int i = 0; i < lgrp_spaces()->length(); i++) {
+      guarantee(lgrp_spaces()->at(i)->space()->expand_no_resize_threshold(size),
+                                                "Space invariants ain't good!");
+    }
+    return true;
+  }
+  return false;
+}
+#endif
+
 void MutableNUMASpace::initialize(MemRegion mr,
                                   bool clear_space,
                                   bool mangle_space,
@@ -623,7 +686,9 @@ void MutableNUMASpace::initialize(MemRegion mr,
         }
 
       assert(chunk_byte_size >= page_size(), "Chunk size too small");
+#ifndef OPTIMIZE_RESIZE
       assert(chunk_byte_size <= capacity_in_bytes(), "Sanity check");
+#endif
     }
 
     if (i == 0) { // Bottom chunk
@@ -689,6 +754,9 @@ void MutableNUMASpace::initialize(MemRegion mr,
 
     set_adaptation_cycles(samples_count());
   }
+#ifdef OPTIMIZE_RESIZE
+  _no_resize_threshold = new_region.end(); // This should be the new_region of last chunk.
+#endif
 #ifdef YOUNGGEN_8TIMES
   _default_chunk_size = default_chunk_size();
   _phys_chunk_threshold = (_default_chunk_size / os::numa_get_groups_num()) >> 2;

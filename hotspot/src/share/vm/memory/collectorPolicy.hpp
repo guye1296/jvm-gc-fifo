@@ -222,7 +222,9 @@ class GenCollectorPolicy : public CollectorPolicy {
   size_t _min_gen0_size;
   size_t _initial_gen0_size;
   size_t _max_gen0_size;
-
+#ifdef OPTIMIZE_RESIZE
+  size_t _actual_gen0_max_size;
+#endif
   GenerationSpec **_generations;
 
   // Return true if an allocation should be attempted in the older
@@ -256,7 +258,10 @@ class GenCollectorPolicy : public CollectorPolicy {
   void set_initial_gen0_size(size_t v) { _initial_gen0_size = v; }
   size_t max_gen0_size() { return _max_gen0_size; }
   void set_max_gen0_size(size_t v) { _max_gen0_size = v; }
-
+#ifdef OPTIMIZE_RESIZE
+  size_t actual_gen0_max_size() { return _actual_gen0_max_size; }
+  void set_actual_gen0_max_size(size_t v) { _actual_gen0_max_size = v; }
+#endif
   virtual int number_of_generations() = 0;
 
   virtual GenerationSpec **generations()       {

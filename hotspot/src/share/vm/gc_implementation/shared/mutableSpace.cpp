@@ -35,6 +35,9 @@ MutableSpace::MutableSpace(size_t alignment): ImmutableSpace(), _top(NULL), _ali
   assert(MutableSpace::alignment() >= 0 &&
          MutableSpace::alignment() % os::vm_page_size() == 0,
          "Space should be aligned");
+#ifdef OPTIMIZE_RESIZE
+  _no_resize_threshold = NULL;
+#endif
   _mangler = new MutableSpaceMangler(this);
 }
 
@@ -69,7 +72,26 @@ void MutableSpace::free_region(MemRegion mr) {
   }
 }
 #endif
+#ifdef OPTIMIZE_RESIZE
+// Calls clear. size is in bytes.
+void MutableSpace::set_no_resize_threshold(size_t size, bool clear_space, bool mangle_space) {
+  MemRegion mr(bottom(), size / HeapWordSize);
+  if (clear_space) {
+   clear(mangle_space);
+   //free_region(MemRegion(bottom(), end()));
+  }
+  assert(mr.end() <= end(), "something is wrong!");
+  _no_resize_threshold = mr.end();
+}
 
+bool MutableSpace::expand_no_resize_threshold(size_t size) {
+  if (_no_resize_threshold + (size / HeapWordSize) <= end()) {
+    _no_resize_threshold += size / HeapWordSize;
+    return true;
+  }
+  return false;
+}
+#endif
 void MutableSpace::pretouch_pages(MemRegion mr) {
   for (volatile char *p = (char*)mr.start(); p < (char*)mr.end(); p += os::vm_page_size()) {
     char t = *p; *p = t;
@@ -140,6 +162,9 @@ void MutableSpace::initialize(MemRegion mr,
   if (clear_space) {
     clear(mangle_space);
   }
+#ifdef OPTIMIZE_RESIZE
+  _no_resize_threshold = end();
+#endif
 }
 
 void MutableSpace::clear(bool mangle_space) {
@@ -189,9 +214,14 @@ HeapWord* MutableSpace::allocate(size_t size) {
           Thread::current()->is_VM_thread()),
          "not locked");
   HeapWord* obj = top();
+#ifdef OPTIMIZE_RESIZE
+  if (_no_resize_threshold >= obj + size) {
+#else
   if (pointer_delta(end(), obj) >= size) {
+#endif
     HeapWord* new_top = obj + size;
     set_top(new_top);
+    assert(top() <= _no_resize_threshold, "sanity");
     assert(is_object_aligned((intptr_t)obj) && is_object_aligned((intptr_t)new_top),
            "checking alignment");
     return obj;
@@ -204,7 +234,11 @@ HeapWord* MutableSpace::allocate(size_t size) {
 HeapWord* MutableSpace::cas_allocate(size_t size) {
   do {
     HeapWord* obj = top();
+#ifdef OPTIMIZE_RESIZE
+    if (_no_resize_threshold >= obj + size) {
+#else
     if (pointer_delta(end(), obj) >= size) {
+#endif
       HeapWord* new_top = obj + size;
       HeapWord* result = (HeapWord*)Atomic::cmpxchg_ptr(new_top, top_addr(), obj);
       // result can be one of two:
@@ -213,6 +247,7 @@ HeapWord* MutableSpace::cas_allocate(size_t size) {
       if (result != obj) {
         continue; // another thread beat us to the allocation, try again
       }
+      assert(top() <= _no_resize_threshold, "sanity");
       assert(is_object_aligned((intptr_t)obj) && is_object_aligned((intptr_t)new_top),
              "checking alignment");
       return obj;

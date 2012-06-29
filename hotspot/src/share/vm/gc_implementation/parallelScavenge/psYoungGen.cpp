@@ -33,6 +33,10 @@
 #include "oops/oop.inline.hpp"
 #include "runtime/java.hpp"
 
+#ifdef OPTIMIZE_RESIZE
+#include "gc_implementation/parallelScavenge/generationSizer.hpp"
+#endif
+
 PSYoungGen::PSYoungGen(size_t        initial_size,
                        size_t        min_size,
                        size_t        max_size) :
@@ -44,7 +48,11 @@ PSYoungGen::PSYoungGen(size_t        initial_size,
 void PSYoungGen::initialize_virtual_space(ReservedSpace rs, size_t alignment) {
   assert(_init_gen_size != 0, "Should have a finite size");
   _virtual_space = new PSVirtualSpace(rs, alignment);
+#ifdef OPTIMIZE_RESIZE
+  if (!virtual_space()->expand_by(_max_gen_size)) {
+#else
   if (!virtual_space()->expand_by(_init_gen_size)) {
+#endif
     vm_exit_during_initialization("Could not reserve enough space for "
                                   "object heap");
   }
@@ -113,8 +121,12 @@ void PSYoungGen::initialize_work() {
   // Compute maximum space sizes for performance counters
   ParallelScavengeHeap* heap = (ParallelScavengeHeap*)Universe::heap();
   size_t alignment = heap->intra_heap_alignment();
+#ifdef OPTIMIZE_RESIZE
+  size_t size = ((GenerationSizer*)heap->collector_policy())->actual_gen0_max_size();
+  _no_resize_actual_max_size = size;
+#else
   size_t size = virtual_space()->reserved_size();
-
+#endif
   size_t max_survivor_size;
   size_t max_eden_size;
 
@@ -149,7 +161,6 @@ void PSYoungGen::initialize_work() {
     // the size of a survivor space is max_survivor_size.
     max_eden_size = size - 2 * max_survivor_size;
   }
-
   _eden_counters = new SpaceCounters("eden", 0, max_eden_size, _eden_space,
                                      _gen_counters);
   _from_counters = new SpaceCounters("s0", 1, max_survivor_size, _from_space,
@@ -157,6 +168,9 @@ void PSYoungGen::initialize_work() {
   _to_counters = new SpaceCounters("s1", 2, max_survivor_size, _to_space,
                                    _gen_counters);
 
+#ifdef OPTIMIZE_RESIZE
+  set_space_boundaries(max_eden_size, max_survivor_size);
+#endif
   compute_initial_space_boundaries();
 }
 
@@ -166,8 +180,11 @@ void PSYoungGen::compute_initial_space_boundaries() {
 
   // Compute sizes
   size_t alignment = heap->intra_heap_alignment();
+#ifdef OPTIMIZE_RESIZE
+  size_t size = _init_gen_size;
+#else
   size_t size = virtual_space()->committed_size();
-
+#endif
   size_t survivor_size = size / InitialSurvivorRatio;
   survivor_size = align_size_down(survivor_size, alignment);
   // ... but never less than an alignment
@@ -177,7 +194,20 @@ void PSYoungGen::compute_initial_space_boundaries() {
   size_t eden_size = size - (2 * survivor_size);
 
   // Now go ahead and set 'em.
+#ifdef OPTIMIZE_RESIZE
+  int node_count = 1;
+  if (UseNUMA) {
+    node_count = os::numa_get_groups_num();
+  }
+  eden_space()->set_no_resize_threshold(eden_size / node_count,
+                                        true, ZapUnusedHeapArea);
+  from_space()->set_no_resize_threshold(survivor_size / node_count,
+                                        true, ZapUnusedHeapArea);
+  to_space()->set_no_resize_threshold(survivor_size / node_count,
+                                      true, ZapUnusedHeapArea);
+#else
   set_space_boundaries(eden_size, survivor_size);
+#endif
   space_invariants();
 
   if (UsePerfData) {
@@ -198,7 +228,6 @@ void PSYoungGen::set_space_boundaries(size_t eden_size, size_t survivor_size) {
   char *to_start   = eden_start + eden_size;
   char *from_start = to_start   + survivor_size;
   char *from_end   = from_start + survivor_size;
-
   assert(from_end == virtual_space()->high(), "just checking");
   assert(is_object_aligned((intptr_t)eden_start), "checking alignment");
   assert(is_object_aligned((intptr_t)to_start),   "checking alignment");
@@ -269,6 +298,19 @@ void PSYoungGen::space_invariants() {
 
 #ifdef YOUNGGEN_8TIMES
 void PSYoungGen::resize(size_t eden_size, size_t to_size) {
+#ifdef OPTIMIZE_RESIZE
+  eden_space()->set_no_resize_threshold(eden_size, SpaceDecorator::Clear,
+                                        SpaceDecorator::DontMangle);
+  to_space()->set_no_resize_threshold(to_size, SpaceDecorator::Clear,
+                                         SpaceDecorator::DontMangle);
+  // to_size is the general survivor size. We change
+  // from_space size only if it is to be increased as
+  // it contains live data.
+  if (to_size > from_space()->capacity_in_bytes()) {
+    from_space()->set_no_resize_threshold(to_size, SpaceDecorator::DontClear,
+                                             SpaceDecorator::DontMangle);
+  }
+#else
   size_t from_size;
   if (UseNUMA) {
   //Lokesh: We cannot resize from space as it contains live objects.
@@ -296,6 +338,7 @@ void PSYoungGen::resize(size_t eden_size, size_t to_size) {
         _max_gen_size, min_gen_size());
     }
   }
+#endif
 }
 #else
 void PSYoungGen::resize(size_t eden_size, size_t survivor_size) {
@@ -344,7 +387,6 @@ bool PSYoungGen::resize_generation(size_t eden_size, size_t survivor_size) {
   size_t desired_size = MAX2(MIN2(eden_plus_survivors, max_size()),
                              min_gen_size());
   assert(desired_size <= max_size(), "just checking");
-
   if (desired_size > orig_size) {
     // Grow the generation
     size_t change = desired_size - orig_size;

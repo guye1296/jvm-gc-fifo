@@ -49,6 +49,10 @@
 #define INTER_NODE_STEALING
 #endif
 
+#ifdef YOUNGGEN_8TIMES
+#define OPTIMIZE_RESIZE
+#endif
+
 // Makes a string of the argument (which is not macro-expanded)
 #define STR(a)  #a
 

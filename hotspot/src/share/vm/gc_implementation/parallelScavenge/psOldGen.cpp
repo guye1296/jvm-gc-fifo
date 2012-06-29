@@ -65,7 +65,11 @@ void PSOldGen::initialize(ReservedSpace rs, size_t alignment,
 void PSOldGen::initialize_virtual_space(ReservedSpace rs, size_t alignment) {
 
   _virtual_space = new PSVirtualSpace(rs, alignment);
+#ifdef OPTIMIZE_RESIZE
+  if (!_virtual_space->expand_by(_max_gen_size)) {
+#else
   if (!_virtual_space->expand_by(_init_gen_size)) {
+#endif
     vm_exit_during_initialization("Could not reserve enough space for "
                                   "object heap");
   }
@@ -123,7 +127,6 @@ void PSOldGen::initialize_work(const char* perf_data_name, int level) {
   //
   // ObjectSpace stuff
   //
-
   _object_space = new MutableSpace(virtual_space()->alignment());
 
   if (_object_space == NULL)
@@ -132,7 +135,11 @@ void PSOldGen::initialize_work(const char* perf_data_name, int level) {
   object_space()->initialize(cmr,
                              SpaceDecorator::Clear,
                              SpaceDecorator::Mangle);
-
+#ifdef OPTIMIZE_RESIZE
+  object_space()->set_no_resize_threshold(_init_gen_size,
+                                          SpaceDecorator::Clear,
+                                          SpaceDecorator::Mangle);
+#endif
   _object_mark_sweep = new PSMarkSweepDecorator(_object_space, start_array(), MarkSweepDeadRatio);
 
   if (_object_mark_sweep == NULL)
@@ -242,13 +249,27 @@ void PSOldGen::expand(size_t bytes) {
 
   bool success = false;
   if (aligned_expand_bytes > aligned_bytes) {
+#ifdef OPTIMIZE_RESIZE
+    success = object_space()->expand_no_resize_threshold(aligned_expand_bytes);
+#else
     success = expand_by(aligned_expand_bytes);
+#endif
   }
   if (!success) {
+#ifdef OPTIMIZE_RESIZE
+    success = object_space()->expand_no_resize_threshold(aligned_bytes);
+#else
     success = expand_by(aligned_bytes);
+#endif
   }
   if (!success) {
+#ifdef OPTIMIZE_RESIZE
+    object_space()->set_no_resize_threshold(
+                    pointer_delta(object_space()->end(), object_space()->bottom()) * HeapWordSize,
+                    SpaceDecorator::DontClear, SpaceDecorator::DontMangle);
+#else
     success = expand_to_reserved();
+#endif
   }
 
   if (PrintGC && Verbose) {
@@ -345,7 +366,10 @@ void PSOldGen::resize(size_t desired_free_space) {
 
   assert(gen_size_limit() >= reserved().byte_size(), "max new size problem?");
   new_size = align_size_up(new_size, alignment);
-
+#ifdef OPTIMIZE_RESIZE
+  object_space()->set_no_resize_threshold(new_size, SpaceDecorator::DontClear,
+                                                    SpaceDecorator::DontMangle);
+#else
   const size_t current_size = capacity_in_bytes();
 
   if (PrintAdaptiveSizePolicy && Verbose) {
@@ -380,6 +404,7 @@ void PSOldGen::resize(size_t desired_free_space) {
                   heap->total_collections(),
                   size_before, virtual_space()->committed_size());
   }
+#endif //OPTIMIZE_RESIZE
 }
 
 // NOTE! We need to be careful about resizing. During a GC, multiple

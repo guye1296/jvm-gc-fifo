@@ -236,8 +236,15 @@ class MutableNUMASpace : public MutableSpace {
   virtual void ensure_parsability();
   virtual size_t used_in_words() const;
   virtual size_t free_in_words() const;
-
+#ifdef OPTIMIZE_RESIZE
+  // Please note that _no_resize_threshold of the NUMASpace holds the actual size for the
+  // last chunk of the space.
+  virtual void set_no_resize_threshold(size_t size, bool clear_space, bool mangle_space);
+  virtual bool expand_no_resize_threshold(size_t size);
+  virtual size_t capacity_in_words() const;
+#else
   using MutableSpace::capacity_in_words;
+#endif
   virtual size_t capacity_in_words(Thread* thr) const;
   virtual size_t tlab_capacity(Thread* thr) const;
   virtual size_t unsafe_max_tlab_alloc(Thread* thr) const;

@@ -216,7 +216,9 @@ jint ParallelScavengeHeap::initialize() {
 
   _old_gen = _gens->old_gen();
   _young_gen = _gens->young_gen();
-
+#ifdef OPTIMIZE_RESIZE
+  _young_gen->_no_resize_actual_max_size = _collector_policy->actual_gen0_max_size();
+#endif
   const size_t eden_capacity = _young_gen->eden_space()->capacity_in_bytes();
   const size_t old_capacity = _old_gen->capacity_in_bytes();
   const size_t initial_promo_size = MIN2(eden_capacity, old_capacity);

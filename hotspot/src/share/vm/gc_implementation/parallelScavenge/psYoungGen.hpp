@@ -155,8 +155,14 @@ class PSYoungGen : public CHeapObj {
   size_t free_in_words() const;
 
   // The max this generation can grow to
+#ifdef OPTIMIZE_RESIZE
+  size_t _no_resize_actual_max_size;
+  size_t max_size() const {
+    return _no_resize_actual_max_size;
+  }
+#else
   size_t max_size() const            { return _reserved.byte_size(); }
-
+#endif
   // The max this generation can grow to if the boundary between
   // the generations are allowed to move.
   size_t gen_size_limit() const { return _max_gen_size; }

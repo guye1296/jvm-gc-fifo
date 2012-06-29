@@ -52,7 +52,9 @@ class MutableSpace: public ImmutableSpace {
   size_t _alignment;
  protected:
   HeapWord* _top;
-
+#ifdef OPTIMIZE_RESIZE
+  HeapWord* _no_resize_threshold;
+#endif
   MutableSpaceMangler* mangler() { return _mangler; }
 
   void numa_setup_pages(MemRegion mr, bool clear_space);
@@ -92,6 +94,13 @@ class MutableSpace: public ImmutableSpace {
                           bool setup_pages = SetupPages);
 
   virtual void clear(bool mangle_space);
+#ifdef OPTIMIZE_RESIZE
+  virtual HeapWord* no_resize_threshold() const { return _no_resize_threshold; }
+  virtual void set_no_resize_threshold(size_t size, bool clear_space, bool mangle_space);
+  virtual bool expand_no_resize_threshold(size_t size);
+  virtual size_t capacity_in_words() const { return pointer_delta(_no_resize_threshold, bottom()); }
+  virtual size_t capacity_in_words(Thread* thr) const { return capacity_in_words(); }
+#endif
   // Does the usual initialization but optionally resets top to bottom.
 #if 0  // MANGLE_SPACE
   void initialize(MemRegion mr, bool clear_space, bool reset_top);
@@ -124,7 +133,11 @@ class MutableSpace: public ImmutableSpace {
 
   // Size computations.  Sizes are in heapwords.
   virtual size_t used_in_words() const                    { return pointer_delta(top(), bottom()); }
+#ifdef OPTIMIZE_RESIZE
+  virtual size_t free_in_words() const                    { return pointer_delta(_no_resize_threshold, top()); }
+#else
   virtual size_t free_in_words() const                    { return pointer_delta(end(),    top()); }
+#endif
   virtual size_t tlab_capacity(Thread* thr) const         { return capacity_in_bytes();            }
   virtual size_t unsafe_max_tlab_alloc(Thread* thr) const { return free_in_bytes();                }
 

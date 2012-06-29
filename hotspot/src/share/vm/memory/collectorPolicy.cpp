@@ -424,7 +424,48 @@ void GenCollectorPolicy::initialize_size_info() {
       MAX2(MIN2(_initial_gen0_size, _max_gen0_size), _min_gen0_size));
     set_min_gen0_size(MIN2(_min_gen0_size, _initial_gen0_size));
   }
+#ifdef OPTIMIZE_RESIZE
+  set_actual_gen0_max_size(max_gen0_size());
+  {
+    size_t size = max_gen0_size();
+    size_t alignment = 64 * K;
+    size_t max_eden_size, max_survivor_size;
+    if (UseAdaptiveSizePolicy) {
+      max_survivor_size = size / MinSurvivorRatio;
 
+      // round the survivor space size down to the nearest alignment
+      // and make sure its size is greater than 0.
+      max_survivor_size = align_size_down(max_survivor_size, alignment);
+      max_survivor_size = MAX2(max_survivor_size, alignment);
+
+      // set the maximum size of eden to be the size of the young gen
+      // less two times the minimum survivor size. The minimum survivor
+      // size for UseAdaptiveSizePolicy is one alignment.
+      max_eden_size = size - 2 * alignment;
+    } else {
+      max_survivor_size = size / InitialSurvivorRatio;
+  
+      // round the survivor space size down to the nearest alignment
+      // and make sure its size is greater than 0.
+      max_survivor_size = align_size_down(max_survivor_size, alignment);
+      max_survivor_size = MAX2(max_survivor_size, alignment);
+
+      // set the maximum size of eden to be the size of the young gen
+      // less two times the survivor size when the generation is 100%
+      // committed. The minimum survivor size for -UseAdaptiveSizePolicy
+      // is dependent on the committed portion (current capacity) of the
+      // generation - the less space committed, the smaller the survivor
+      // space, possibly as small as an alignment. However, we are interested
+      // in the case where the young generation is 100% committed, as this
+      // is the point where eden reachs its maximum size. At this point,
+      // the size of a survivor space is max_survivor_size.
+      max_eden_size = size - 2 * max_survivor_size;
+    }
+    set_max_gen0_size(max_eden_size + (2 * max_survivor_size));
+    set_max_heap_byte_size(_max_heap_byte_size + (max_gen0_size() - size));
+    set_max_heap_byte_size(align_size_up(_max_heap_byte_size, max_alignment()));
+  }
+#endif
   if (PrintGCDetails && Verbose) {
     gclog_or_tty->print_cr("1: Minimum gen0 " SIZE_FORMAT "  Initial gen0 "
       SIZE_FORMAT "  Maximum gen0 " SIZE_FORMAT,
