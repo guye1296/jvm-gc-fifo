@@ -53,6 +53,9 @@
 #define OPTIMIZE_RESIZE
 #endif
 
+#ifdef NUMA_AWARE_STEALING
+#define NUMA_AWARE_STEALING_OLD_GEN
+#endif
 // Makes a string of the argument (which is not macro-expanded)
 #define STR(a)  #a
 

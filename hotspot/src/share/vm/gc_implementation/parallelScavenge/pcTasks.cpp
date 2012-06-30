@@ -234,12 +234,22 @@ void StealMarkingTask::do_it(GCTaskManager* manager, uint which) {
   ObjArrayTask task;
   int random_seed = 17;
   do {
+#ifdef NUMA_AWARE_STEALING_OLD_GEN
+    while (ParCompactionManager::steal_objarray(which, &random_seed, task,
+                                                Thread::current()->lgrp_id())) {
+#else
     while (ParCompactionManager::steal_objarray(which, &random_seed, task)) {
+#endif
       objArrayKlass* const k = (objArrayKlass*)task.obj()->blueprint();
       k->oop_follow_contents(cm, task.obj(), task.index());
       cm->follow_marking_stacks();
     }
+#ifdef NUMA_AWARE_STEALING_OLD_GEN
+    while (ParCompactionManager::steal(which, &random_seed, obj,
+                                       Thread::current()->lgrp_id())) {
+#else
     while (ParCompactionManager::steal(which, &random_seed, obj)) {
+#endif
       obj->follow_contents(cm);
       cm->follow_marking_stacks();
     }
@@ -276,7 +286,12 @@ void StealRegionCompactionTask::do_it(GCTaskManager* manager, uint which) {
   // setting the termination flag
 
   while(true) {
+#ifdef NUMA_AWARE_STEALING_OLD_GEN
+    if (ParCompactionManager::steal(which, &random_seed, region_index,
+                                    Thread::current()->lgrp_id())) {
+#else
     if (ParCompactionManager::steal(which, &random_seed, region_index)) {
+#endif
       PSParallelCompact::fill_and_update_region(cm, region_index);
       cm->drain_region_stacks();
     } else {

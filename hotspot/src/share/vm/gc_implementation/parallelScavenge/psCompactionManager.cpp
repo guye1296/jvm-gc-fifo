@@ -37,6 +37,10 @@
 #include "oops/oop.pcgc.inline.hpp"
 #include "utilities/stack.inline.hpp"
 
+#ifdef NUMA_AWARE_STEALING_OLD_GEN
+#include "gc_implementation/parallelScavenge/gcTaskThread.hpp"
+#endif
+
 PSOldGen*            ParCompactionManager::_old_gen = NULL;
 ParCompactionManager**  ParCompactionManager::_manager_array = NULL;
 OopTaskQueueSet*     ParCompactionManager::_stack_array = NULL;
@@ -71,23 +75,45 @@ void ParCompactionManager::initialize(ParMarkBitMap* mbm) {
   assert(_manager_array == NULL, "Attempt to initialize twice");
   _manager_array = NEW_C_HEAP_ARRAY(ParCompactionManager*, parallel_gc_threads+1 );
   guarantee(_manager_array != NULL, "Could not allocate manager_array");
+#ifdef NUMA_AWARE_STEALING_OLD_GEN
+  if (UseNUMA) {
+    size_t node_count = os::numa_get_groups_num();
+    _stack_array = new OopTaskQueueSet(parallel_gc_threads, node_count);
+    guarantee(_stack_array != NULL, "Could not allocate stack_array");
+    _objarray_queues = new ObjArrayTaskQueueSet(parallel_gc_threads, node_count);
+    guarantee(_objarray_queues != NULL, "Could not allocate objarray_queues");
+    _region_array = new RegionTaskQueueSet(parallel_gc_threads, node_count);
+    guarantee(_region_array != NULL, "Could not allocate region_array");
 
-  _stack_array = new OopTaskQueueSet(parallel_gc_threads);
-  guarantee(_stack_array != NULL, "Could not allocate stack_array");
-  _objarray_queues = new ObjArrayTaskQueueSet(parallel_gc_threads);
-  guarantee(_objarray_queues != NULL, "Could not allocate objarray_queues");
-  _region_array = new RegionTaskQueueSet(parallel_gc_threads);
-  guarantee(_region_array != NULL, "Could not allocate region_array");
+    // Create and register the ParCompactionManager(s) for the worker threads.
+    for(uint i=0; i<parallel_gc_threads; i++) {
+      int lgrp_id = PSParallelCompact::gc_task_manager()->thread(i)->lgrp_id();
+      _manager_array[i] = new ParCompactionManager();
+      guarantee(_manager_array[i] != NULL, "Could not create ParCompactionManager");
+      stack_array()->register_queue(i, _manager_array[i]->marking_stack(), lgrp_id);
+      _objarray_queues->register_queue(i, &_manager_array[i]->_objarray_stack, lgrp_id);
+      region_array()->register_queue(i, _manager_array[i]->region_stack(), lgrp_id);
+    }
+  } else {
+#endif
+    _stack_array = new OopTaskQueueSet(parallel_gc_threads);
+    guarantee(_stack_array != NULL, "Could not allocate stack_array");
+    _objarray_queues = new ObjArrayTaskQueueSet(parallel_gc_threads);
+    guarantee(_objarray_queues != NULL, "Could not allocate objarray_queues");
+    _region_array = new RegionTaskQueueSet(parallel_gc_threads);
+    guarantee(_region_array != NULL, "Could not allocate region_array");
 
-  // Create and register the ParCompactionManager(s) for the worker threads.
-  for(uint i=0; i<parallel_gc_threads; i++) {
-    _manager_array[i] = new ParCompactionManager();
-    guarantee(_manager_array[i] != NULL, "Could not create ParCompactionManager");
-    stack_array()->register_queue(i, _manager_array[i]->marking_stack());
-    _objarray_queues->register_queue(i, &_manager_array[i]->_objarray_stack);
-    region_array()->register_queue(i, _manager_array[i]->region_stack());
+    // Create and register the ParCompactionManager(s) for the worker threads.
+    for(uint i=0; i<parallel_gc_threads; i++) {
+      _manager_array[i] = new ParCompactionManager();
+      guarantee(_manager_array[i] != NULL, "Could not create ParCompactionManager");
+      stack_array()->register_queue(i, _manager_array[i]->marking_stack());
+      _objarray_queues->register_queue(i, &_manager_array[i]->_objarray_stack);
+      region_array()->register_queue(i, _manager_array[i]->region_stack());
+    }
+#ifdef NUMA_AWARE_STEALING_OLD_GEN
   }
-
+#endif
   // The VMThread gets its own ParCompactionManager, which is not available
   // for work stealing.
   _manager_array[parallel_gc_threads] = new ParCompactionManager();

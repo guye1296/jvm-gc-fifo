@@ -142,7 +142,19 @@ private:
 
   // Access function for compaction managers
   static ParCompactionManager* gc_thread_compaction_manager(int index);
+#ifdef NUMA_AWARE_STEALING_OLD_GEN
+  static bool steal(int queue_num, int* seed, oop& t, int affinity) {
+    return stack_array()->steal(queue_num, seed, t, affinity);
+  }
 
+  static bool steal_objarray(int queue_num, int* seed, ObjArrayTask& t, int affinity) {
+    return _objarray_queues->steal(queue_num, seed, t, affinity);
+  }
+
+  static bool steal(int queue_num, int* seed, size_t& region, int affinity) {
+    return region_array()->steal(queue_num, seed, region, affinity);
+  }
+#else
   static bool steal(int queue_num, int* seed, oop& t) {
     return stack_array()->steal(queue_num, seed, t);
   }
@@ -154,7 +166,7 @@ private:
   static bool steal(int queue_num, int* seed, size_t& region) {
     return region_array()->steal(queue_num, seed, region);
   }
-
+#endif
   // Process tasks remaining on any marking stack
   void follow_marking_stacks();
   inline bool marking_stacks_empty() const;
