@@ -204,7 +204,6 @@ jint ParallelScavengeHeap::initialize() {
   // _max_gen_size is still used as that value.
   double max_gc_pause_sec = ((double) MaxGCPauseMillis)/1000.0;
   double max_gc_minor_pause_sec = ((double) MaxGCMinorPauseMillis)/1000.0;
-
   _gens = new AdjoiningGenerations(main_rs,
                                    og_cur_size,
                                    og_min_size,
@@ -219,13 +218,14 @@ jint ParallelScavengeHeap::initialize() {
 #ifdef OPTIMIZE_RESIZE
   _young_gen->_no_resize_actual_max_size = _collector_policy->actual_gen0_max_size();
 #endif
-  const size_t eden_capacity = _young_gen->eden_space()->capacity_in_bytes();
+  const int numa_nodes = UseNUMA ? os::numa_get_groups_num() : 1;
+  const size_t eden_capacity = _young_gen->eden_space()->capacity_in_bytes() / numa_nodes;
   const size_t old_capacity = _old_gen->capacity_in_bytes();
   const size_t initial_promo_size = MIN2(eden_capacity, old_capacity);
   _size_policy =
     new PSAdaptiveSizePolicy(eden_capacity,
                              initial_promo_size,
-                             young_gen()->to_space()->capacity_in_bytes(),
+                             young_gen()->to_space()->capacity_in_bytes() / numa_nodes,
                              intra_heap_alignment(),
                              max_gc_pause_sec,
                              max_gc_minor_pause_sec,

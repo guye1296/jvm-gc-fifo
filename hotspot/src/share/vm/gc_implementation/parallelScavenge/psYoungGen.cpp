@@ -78,10 +78,12 @@ void PSYoungGen::initialize_work() {
     // spaces have been computed.
     SpaceMangler::mangle_region(cmr);
   }
-
+#ifndef FREE_USENUMA
   if (UseNUMA) {
     _eden_space = new MutableNUMASpace(virtual_space()->alignment());
 #ifdef YOUNGGEN_8TIMES
+  //_from_space = new MutableSpace(virtual_space()->alignment());
+  //_to_space   = new MutableSpace(virtual_space()->alignment());
     _from_space = new MutableNUMASpace(virtual_space()->alignment());
     _to_space   = new MutableNUMASpace(virtual_space()->alignment());
 #endif
@@ -92,10 +94,13 @@ void PSYoungGen::initialize_work() {
     _to_space   = new MutableSpace(virtual_space()->alignment());
 #endif
   }
+#endif //!FREE_USENUMA
 #ifndef YOUNGGEN_8TIMES
+    _eden_space = new MutableSpace(virtual_space()->alignment());
   _from_space = new MutableSpace(virtual_space()->alignment());
   _to_space   = new MutableSpace(virtual_space()->alignment());
 #endif
+
   if (_eden_space == NULL || _from_space == NULL || _to_space == NULL) {
     vm_exit_during_initialization("Could not allocate a young gen space");
   }
@@ -192,19 +197,14 @@ void PSYoungGen::compute_initial_space_boundaries() {
 
   // Young generation is eden + 2 survivor spaces
   size_t eden_size = size - (2 * survivor_size);
-
   // Now go ahead and set 'em.
 #ifdef OPTIMIZE_RESIZE
-  int node_count = 1;
-  if (UseNUMA) {
-    node_count = os::numa_get_groups_num();
-  }
-  eden_space()->set_no_resize_threshold(eden_size / node_count,
-                                        true, ZapUnusedHeapArea);
-  from_space()->set_no_resize_threshold(survivor_size / node_count,
-                                        true, ZapUnusedHeapArea);
-  to_space()->set_no_resize_threshold(survivor_size / node_count,
-                                      true, ZapUnusedHeapArea);
+  eden_space()->set_no_resize_threshold(eden_size, true,
+                                        ZapUnusedHeapArea);
+  from_space()->set_no_resize_threshold(survivor_size, true,
+                                        ZapUnusedHeapArea);
+  to_space()->set_no_resize_threshold(survivor_size, true,
+                                      ZapUnusedHeapArea);
 #else
   set_space_boundaries(eden_size, survivor_size);
 #endif

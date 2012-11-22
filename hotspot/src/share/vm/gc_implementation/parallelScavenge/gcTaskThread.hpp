@@ -52,11 +52,11 @@ private:
   uint _id_in_node; // Maintains a thread id within node
  public:
   msg_t** local_msg; // Msg holding a locally claimed msg.
+  uint id_in_node()            { return _id_in_node;}
+  void set_id_in_node(uint id) { _id_in_node = id;}
 #ifdef INTER_NODE_STEALING
   intptr_t* msg_count;
 #endif
-  uint id_in_node()            { return _id_in_node;}
-  void set_id_in_node(uint id) { _id_in_node = id;}
 #else
  public:
 #endif
@@ -116,7 +116,10 @@ private:
   void print_task_time_stamps();
   void print_on(outputStream* st) const;
   void print() const                                { print_on(tty); }
-
+#ifdef BANDWIDTH_TEST
+  unsigned long bytes_read, bytes_write;
+  uint64_t bytes_time;
+#endif
 protected:
   // Constructor.  Clients use factory, but there could be subclasses.
   GCTaskThread(GCTaskManager* manager, uint which, uint processor_id);

@@ -54,7 +54,9 @@
 #include "runtime/vm_operations.hpp"
 #include "services/memoryService.hpp"
 #include "utilities/stack.inline.hpp"
-
+#ifdef BANDWIDTH_TEST
+#include "gc_implementation/parallelScavenge/gcTaskThread.hpp"
+#endif
 
 HeapWord*                  PSScavenge::_to_space_top_before_gc = NULL;
 int                        PSScavenge::_consecutive_skipped_scavenges = 0;
@@ -244,8 +246,16 @@ extern unsigned long young_par_time;
 extern unsigned long young_gc_time;
 extern unsigned long young_resize_time;
 extern unsigned long young_weak_ref_time;
+extern size_t young_work_done;
 extern unsigned young_gc_count;
 extern unsigned old_gc_count;
+#ifdef BANDWIDTH_TEST
+static uint64_t read_tsc(void) {
+  uint32_t a, d;
+  __asm __volatile("rdtsc" : "=a" (a), "=d" (d));
+  return ((uint64_t) a) | (((uint64_t) d) << 32);
+}
+#endif
 #endif
 // This method contains all heap specific policy for invoking scavenge.
 // PSScavenge::invoke_no_policy() will do nothing but attempt to
@@ -329,7 +339,6 @@ bool PSScavenge::invoke_no_policy() {
   PSPermGen* perm_gen = heap->perm_gen();
   PSAdaptiveSizePolicy* size_policy = heap->size_policy();
   heap->increment_total_collections();
-
   AdaptiveSizePolicyOutput(size_policy, heap->total_collections());
 
   if ((gc_cause != GCCause::_java_lang_system_gc) ||
@@ -487,9 +496,43 @@ bool PSScavenge::invoke_no_policy() {
 #else
       gc_task_manager()->add_list(q, false);
 #endif
+#ifdef BANDWIDTH_TEST
+      for (uint i = 0; i < ParallelGCThreads; i++) {
+        gc_task_manager()->thread(i)->bytes_read = 0;
+        gc_task_manager()->thread(i)->bytes_write = 0;
+        gc_task_manager()->thread(i)->bytes_time = 0;
+      }
+#endif
       unsigned long temp = os::javaTimeNanos();
+      //uint64_t a = read_tsc();
       gc_task_manager()->execute_and_wait(q);
-      young_par_time += os::javaTimeNanos() - temp;
+      //uint64_t b = read_tsc();
+      unsigned long temp1 = os::javaTimeNanos() - temp;
+      young_par_time += temp1;
+      if (young_gc_count >= 200 && young_gc_count < 220) {
+#ifdef BANDWIDTH_TEST
+        unsigned long total_bytes = 0;
+        uint64_t total_time = 0;
+        tty->print("Lokesh: ");
+        for(uint i = 0; i < ParallelGCThreads; i++) {
+          unsigned long total = gc_task_manager()->thread(i)->bytes_read + 
+                                gc_task_manager()->thread(i)->bytes_write;
+          total_bytes += total;
+          total_time += gc_task_manager()->thread(i)->bytes_time;
+          tty->print("%u:%lu %.2f  ", i, gc_task_manager()->thread(i)->bytes_time,
+                                         (total * HeapWordSize) /
+                                         (double)gc_task_manager()->thread(i)->bytes_time);
+        }
+        total_time /= ParallelGCThreads;
+        tty->cr();
+        tty->print_cr("Lokesh: total_bytes:%lu cycles:%lu bytes/cycle:%.2f", total_bytes * HeapWordSize,
+                       total_time, (total_bytes * HeapWordSize) / (double)total_time);
+#endif
+        tty->print_cr("Lokesh: Young GC || Time for run %u is:%lu",
+                      young_gc_count, temp1 / 1000);
+      } else if (young_gc_count == 1) {
+         young_gen->eden_space()->print_short();
+      }
 #else
 #ifdef NUMA_AWARE_TASKQ
       gc_task_manager()->add_list(q, true);
@@ -556,6 +599,10 @@ bool PSScavenge::invoke_no_policy() {
 
     if (!promotion_failure_occurred) {
       // Swap the survivor spaces.
+#ifdef EXTRA_COUNTERS
+      //young_work_done += survived + promoted;
+      young_work_done += young_gen->eden_space()->used_in_bytes();
+#endif
 
 
       young_gen->eden_space()->clear(SpaceDecorator::Mangle);
@@ -565,12 +612,12 @@ bool PSScavenge::invoke_no_policy() {
       size_t survived = young_gen->from_space()->used_in_bytes();
       size_t promoted = old_gen->used_in_bytes() - old_gen_used_before;
       size_policy->update_averages(_survivor_overflow, survived, promoted);
-
       // A successful scavenge should restart the GC time limit count which is
       // for full GC's.
       size_policy->reset_gc_overhead_limit_count();
       if (UseAdaptiveSizePolicy) {
         // Calculate the new survivor size and tenuring threshold
+        int numa_nodes = UseNUMA ? os::numa_get_groups_num() : 1;
 
         if (PrintAdaptiveSizePolicy) {
           gclog_or_tty->print("AdaptiveSizeStart: ");
@@ -581,7 +628,7 @@ bool PSScavenge::invoke_no_policy() {
           if (Verbose) {
             gclog_or_tty->print("old_gen_capacity: %d young_gen_capacity: %d"
               " perm_gen_capacity: %d ",
-              old_gen->capacity_in_bytes(), young_gen->capacity_in_bytes(),
+              old_gen->capacity_in_bytes(), young_gen->capacity_in_bytes() / numa_nodes,
               perm_gen->capacity_in_bytes());
           }
         }
@@ -594,14 +641,14 @@ bool PSScavenge::invoke_no_policy() {
           counters->update_old_promo_size(
             size_policy->calculated_promo_size_in_bytes());
           counters->update_old_capacity(old_gen->capacity_in_bytes());
-          counters->update_young_capacity(young_gen->capacity_in_bytes());
+          counters->update_young_capacity(young_gen->capacity_in_bytes() / numa_nodes);
           counters->update_survived(survived);
           counters->update_promoted(promoted);
           counters->update_survivor_overflowed(_survivor_overflow);
         }
 
         size_t survivor_limit =
-          size_policy->max_survivor_size(young_gen->max_size());
+          size_policy->max_survivor_size(young_gen->max_size() / numa_nodes);
         _tenuring_threshold =
           size_policy->compute_survivor_space_size_and_threshold(
                                                            _survivor_overflow,
@@ -630,24 +677,23 @@ bool PSScavenge::invoke_no_policy() {
               UseAdaptiveSizePolicyWithSystemGC)) {
 
           // Calculate optimial free space amounts
-          assert(young_gen->max_size() >
-            young_gen->from_space()->capacity_in_bytes() +
-            young_gen->to_space()->capacity_in_bytes(),
+          assert((young_gen->max_size() / numa_nodes) >
+            (young_gen->from_space()->capacity_in_bytes() / numa_nodes) +
+            (young_gen->to_space()->capacity_in_bytes() / numa_nodes),
             "Sizes of space in young gen are out-of-bounds");
-          size_t max_eden_size = young_gen->max_size() -
-            young_gen->from_space()->capacity_in_bytes() -
-            young_gen->to_space()->capacity_in_bytes();
+          size_t max_eden_size = (young_gen->max_size() / numa_nodes) -
+            (young_gen->from_space()->capacity_in_bytes() / numa_nodes) -
+            (young_gen->to_space()->capacity_in_bytes() / numa_nodes);
           size_policy->compute_generation_free_space(young_gen->used_in_bytes(),
                                    young_gen->eden_space()->used_in_bytes(),
                                    old_gen->used_in_bytes(),
                                    perm_gen->used_in_bytes(),
-                                   young_gen->eden_space()->capacity_in_bytes(),
+                                   young_gen->eden_space()->capacity_in_bytes() / numa_nodes,
                                    old_gen->max_gen_size(),
                                    max_eden_size,
                                    false  /* full gc*/,
                                    gc_cause,
                                    heap->collector_policy());
-
         }
         // Resize the young generation at every collection
         // even if new sizes have not been calculated.  This is
@@ -659,12 +705,12 @@ bool PSScavenge::invoke_no_policy() {
         // a major collection.  Don't resize the old gen here.
 #ifdef EXTRA_COUNTERS
         unsigned long temp = os::javaTimeNanos();
-        heap->resize_young_gen(size_policy->calculated_eden_size_in_bytes(),
-                        size_policy->calculated_survivor_size_in_bytes());
+        heap->resize_young_gen(size_policy->calculated_eden_size_in_bytes() * numa_nodes,
+                        size_policy->calculated_survivor_size_in_bytes() * numa_nodes);
         young_resize_time += os::javaTimeNanos() - temp;
 #else
-        heap->resize_young_gen(size_policy->calculated_eden_size_in_bytes(),
-                        size_policy->calculated_survivor_size_in_bytes());
+        heap->resize_young_gen(size_policy->calculated_eden_size_in_bytes() * numa_nodes,
+                        size_policy->calculated_survivor_size_in_bytes() * numa_nodes);
 #endif
         if (PrintAdaptiveSizePolicy) {
           gclog_or_tty->print_cr("AdaptiveSizeStop: collection: %d ",

@@ -165,7 +165,6 @@ class MutableNUMASpace : public MutableSpace {
 #ifdef YOUNGGEN_8TIMES
   volatile size_t _cur_physical_size;
   size_t          _default_chunk_size;
-  size_t          _phys_chunk_threshold;
   size_t cur_phys_size() const                      { return _cur_physical_size; }
   void set_cur_phys_size(size_t v)                  { _cur_physical_size = v;    }
   volatile size_t* cur_phys_size_addr()             { return &_cur_physical_size;}

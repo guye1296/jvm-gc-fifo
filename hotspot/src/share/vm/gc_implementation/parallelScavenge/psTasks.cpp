@@ -144,6 +144,7 @@ void StealTask::do_inter_node_stealing(PSPromotionManager* pm, uint node) {
   int random_seed = os::random();
   while(true) {
     StarTask p;
+#ifdef INTER_NODE_MSG_Q
 #ifdef LOCAL_MSG_PER_THREAD
     msg_t* m;
     while(pm->message_queue(node)->dequeue(&m)) {
@@ -154,6 +155,7 @@ void StealTask::do_inter_node_stealing(PSPromotionManager* pm, uint node) {
 #endif
       pm->drain_stacks_depth(true);
     }
+#endif
     if (!PSPromotionManager::steal_depth(~0, &random_seed, p, node)) {
       break;
     }
@@ -161,9 +163,17 @@ void StealTask::do_inter_node_stealing(PSPromotionManager* pm, uint node) {
       pm->process_popped_location_depth(p);
       pm->drain_stacks_depth(true);
     } while (PSPromotionManager::steal_depth(~0, &random_seed, p, node));
+#ifdef INTER_NODE_MSG_Q
     pm->flush_msg_queues();
+#else
+    // Since there are no message queues, we are sure once we help
+    // the remote node, there is no more work with it.
+    break;
+#endif
   }
+#ifdef INTER_NODE_MSG_Q
   pm->flush_msg_queues();
+#endif
   assert(pm->stacks_empty(),
          "stacks should be empty at this point");
 }
@@ -280,6 +290,9 @@ void StealTask::do_it(GCTaskManager* manager, uint which) {
     }
   } else { //!UseNUMA
 #endif //INTER_NODE_MSG_Q
+#ifdef INTER_NODE_STEALING
+    int lgrp_id = Thread::current()->lgrp_id() + 1;
+#endif
     while(true) {
       StarTask p;
 #ifdef NUMA_AWARE_STEALING
@@ -292,6 +305,12 @@ void StealTask::do_it(GCTaskManager* manager, uint which) {
         pm->process_popped_location_depth(p);
         pm->drain_stacks_depth(true);
       } else {
+#ifdef INTER_NODE_STEALING
+        if (lgrp_id != Thread::current()->lgrp_id()) {
+          lgrp_id %= os::numa_get_groups_num();
+          do_inter_node_stealing(pm, lgrp_id++);
+        }
+#endif
         if (terminator()->offer_termination()) {
           break;
         }

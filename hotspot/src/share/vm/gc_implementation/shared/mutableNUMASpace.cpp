@@ -46,7 +46,6 @@ MutableNUMASpace::MutableNUMASpace(size_t alignment) : MutableSpace(alignment) {
   _samples_count = 0;
 #ifdef YOUNGGEN_8TIMES
   _cur_physical_size = 0;
-  _phys_chunk_threshold = 0;
 #endif
   update_layout(true);
 }
@@ -581,8 +580,6 @@ void MutableNUMASpace::set_no_resize_threshold(size_t size, bool clear_space, bo
   assert(mr.end() <= end, "something is wrong!");
   _no_resize_threshold = mr.end();
   _default_chunk_size = mr.byte_size();
-  _phys_chunk_threshold = (_default_chunk_size / os::numa_get_groups_num()) >> 2;
-  _default_chunk_size -= (_phys_chunk_threshold * os::numa_get_groups_num()) >> 1;
 }
 
 bool MutableNUMASpace::expand_no_resize_threshold(size_t size) {
@@ -593,8 +590,6 @@ bool MutableNUMASpace::expand_no_resize_threshold(size_t size) {
     _no_resize_threshold += size / HeapWordSize;
     MemRegion mr(bottom, _no_resize_threshold);
     _default_chunk_size = mr.byte_size();
-    _phys_chunk_threshold = (_default_chunk_size / os::numa_get_groups_num()) >> 2;
-    _default_chunk_size -= (_phys_chunk_threshold * os::numa_get_groups_num()) >> 1;
     for (int i = 0; i < lgrp_spaces()->length(); i++) {
       guarantee(lgrp_spaces()->at(i)->space()->expand_no_resize_threshold(size),
                                                 "Space invariants ain't good!");
@@ -759,8 +754,6 @@ void MutableNUMASpace::initialize(MemRegion mr,
 #endif
 #ifdef YOUNGGEN_8TIMES
   _default_chunk_size = default_chunk_size();
-  _phys_chunk_threshold = (_default_chunk_size / os::numa_get_groups_num()) >> 2;
-  _default_chunk_size -= (_phys_chunk_threshold * os::numa_get_groups_num()) >> 1;
 #endif
 }
 
@@ -860,53 +853,57 @@ void MutableNUMASpace::object_iterate(ObjectClosure* cl) {
    the same node for some time allowing local access to recently allocated
    objects.
  */
-
+//#define ONLY_TLAB_NUMA //Comment it for NAPS
 HeapWord* MutableNUMASpace::allocate(size_t size) {
   Thread* thr = Thread::current();
+#ifdef ONLY_TLAB_NUMA
+  int i;
+  if (thr->is_Java_thread()) {
+#endif
   int lgrp_id = thr->lgrp_id();
   if (lgrp_id == -1 || !os::numa_has_group_homing()) {
     lgrp_id = os::numa_get_group_id();
     thr->set_lgrp_id(lgrp_id);
   }
-
-  int i = lgrp_spaces()->find(&lgrp_id, LGRPSpace::equals);
+#ifndef ONLY_TLAB_NUMA
+  int
+#endif
+  i = lgrp_spaces()->find(&lgrp_id, LGRPSpace::equals);
 
   // It is possible that a new CPU has been hotplugged and
   // we haven't reshaped the space accordingly.
   if (i == -1) {
     i = os::random() % lgrp_spaces()->length();
   }
-
+#ifdef ONLY_TLAB_NUMA
+  } else {
+    i = os::random() % lgrp_spaces()->length();
+  }
+#endif
   LGRPSpace* ls = lgrp_spaces()->at(i);
   MutableSpace *s = ls->space();
 #ifndef YOUNGGEN_8TIMES
   HeapWord *p = s->allocate(size);
 #else
   HeapWord *p = NULL;
-  if (cur_phys_size() >= (_default_chunk_size >> LogHeapWordSize)) {
-       goto fail;
+  size_t new_size = cur_phys_size() + size;
+  if (new_size > (_default_chunk_size >> LogHeapWordSize)) {
+    goto fail;
   }
-  size_t phys_size;
-  if ((phys_size = ls->cur_phys_size()) >= (_phys_chunk_threshold >> LogHeapWordSize)) {
-       ls->set_cur_phys_size(0);
-        set_cur_phys_size(cur_phys_size() + phys_size);
-       if (cur_phys_size() >= (_default_chunk_size >> LogHeapWordSize)) {
-               goto fail;
-       }
-  }
+  set_cur_phys_size(new_size);
   p = s->allocate(size);
 #endif
   if (p != NULL) {
     size_t remainder = s->free_in_words();
     if (remainder < CollectedHeap::min_fill_size() && remainder > 0) {
       s->set_top(s->top() - size);
+#ifdef YOUNGGEN_8TIMES
+      set_cur_phys_size(cur_phys_size() - size);
+#endif
       p = NULL;
     }
   }
   if (p != NULL) {
-#ifdef YOUNGGEN_8TIMES
-    ls->set_cur_phys_size(ls->cur_phys_size() + size);
-#endif
     if (top() < s->top()) { // Keep _top updated.
       MutableSpace::set_top(s->top());
     }
@@ -929,46 +926,63 @@ fail:
 // This version is lock-free.
 HeapWord* MutableNUMASpace::cas_allocate(size_t size) {
   Thread* thr = Thread::current();
+#ifdef ONLY_TLAB_NUMA
+  int i;
+  if (thr->is_Java_thread()) {
+#endif
   int lgrp_id = thr->lgrp_id();
   if (lgrp_id == -1 || !os::numa_has_group_homing()) {
     lgrp_id = os::numa_get_group_id();
     thr->set_lgrp_id(lgrp_id);
   }
-
-  int i = lgrp_spaces()->find(&lgrp_id, LGRPSpace::equals);
+#ifndef ONLY_TLAB_NUMA
+  int
+#endif
+  i = lgrp_spaces()->find(&lgrp_id, LGRPSpace::equals);
   // It is possible that a new CPU has been hotplugged and
   // we haven't reshaped the space accordingly.
   if (i == -1) {
     i = os::random() % lgrp_spaces()->length();
   }
+#ifdef ONLY_TLAB_NUMA
+  } else { 
+    i = os::random() % lgrp_spaces()->length();
+  }
+#endif
   LGRPSpace *ls = lgrp_spaces()->at(i);
   MutableSpace *s = ls->space();
 #ifndef YOUNGGEN_8TIMES
   HeapWord *p = s->cas_allocate(size);
 #else
   HeapWord *p = NULL;
-  if (cur_phys_size() >= (_default_chunk_size >> LogHeapWordSize)) {
-       goto out;
-  }
-  size_t phys_size;
-  while ((phys_size = ls->cur_phys_size()) >= (_phys_chunk_threshold >> LogHeapWordSize)) {
-       if (Atomic::cmpxchg_ptr(0, ls->cur_phys_size_addr(), (void*)phys_size) != (void*)phys_size) {
-               continue;
-       }
-       Atomic::add_ptr(phys_size, cur_phys_size_addr());
-       if (cur_phys_size() >= (_default_chunk_size >> LogHeapWordSize)) {
-               goto out;
-       }
-       break;
+  size_t new_size = (intptr_t)Atomic::add_ptr(size, cur_phys_size_addr());
+  if (new_size > (_default_chunk_size >> LogHeapWordSize)) {
+    Atomic::add_ptr(-size, cur_phys_size_addr());
+    goto out;
   }
   p = s->cas_allocate(size);
 #endif
   if (p != NULL) {
+#ifdef OPTIMIZE_RESIZE
+    size_t remainder = pointer_delta(s->no_resize_threshold(), p + size);
+#else
     size_t remainder = pointer_delta(s->end(), p + size);
+#endif
     if (remainder < CollectedHeap::min_fill_size() && remainder > 0) {
       if (s->cas_deallocate(p, size)) {
         // We were the last to allocate and created a fragment less than
         // a minimal object.
+#ifdef YOUNGGEN_8TIMES
+        size_t old_size = cur_phys_size();
+        do {
+          size_t new_size = old_size - size;
+          new_size = Atomic::cmpxchg(new_size, (volatile jlong*)cur_phys_size_addr(), old_size);
+          if (new_size == old_size) {
+            break;
+          }
+          old_size = new_size;
+        } while(true);
+#endif
         p = NULL;
       } else {
         guarantee(false, "Deallocation should always succeed");
@@ -976,9 +990,6 @@ HeapWord* MutableNUMASpace::cas_allocate(size_t size) {
     }
   }
   if (p != NULL) {
-#ifdef YOUNGGEN_8TIMES 
-    Atomic::add_ptr(size, ls->cur_phys_size_addr());
-#endif
     HeapWord* cur_top, *cur_chunk_top = p + size;
     while ((cur_top = top()) < cur_chunk_top) { // Keep _top updated.
       if (Atomic::cmpxchg_ptr(cur_chunk_top, top_addr(), cur_top) == cur_top) {

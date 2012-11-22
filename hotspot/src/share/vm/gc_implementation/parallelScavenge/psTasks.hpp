@@ -118,11 +118,11 @@ class StealTask : public GCTask {
      ParallelTaskTerminator* const _terminator;
    };
    bool _numa_used;
-#ifdef INTER_NODE_STEALING
-   void do_inter_node_stealing(PSPromotionManager* pm, uint node);
-#endif
 #else
    ParallelTaskTerminator* const _terminator;
+#endif
+#ifdef INTER_NODE_STEALING
+   void do_inter_node_stealing(PSPromotionManager* pm, uint node);
 #endif
  public:
 #ifdef TERMINATOR_GCTASK

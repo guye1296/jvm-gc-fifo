@@ -105,8 +105,11 @@ void MutableSpace::initialize(MemRegion mr,
 
   assert(Universe::on_page_boundary(mr.start()) && Universe::on_page_boundary(mr.end()),
          "invalid space boundaries");
-
+#ifdef FREE_USENUMA
+  if (setup_pages && AlwaysPreTouch) {
+#else
   if (setup_pages && (UseNUMA || AlwaysPreTouch)) {
+#endif
     // The space may move left and right or expand/shrink.
     // We'd like to enforce the desired page placement.
     MemRegion head, tail;
@@ -141,12 +144,12 @@ void MutableSpace::initialize(MemRegion mr,
       tail = MemRegion(intersection.end(), intersection.end() + tail_size);
     }
     assert(mr.contains(head) && mr.contains(tail), "Sanity");
-
+#ifndef FREE_USENUMA
     if (UseNUMA) {
       numa_setup_pages(head, clear_space);
       numa_setup_pages(tail, clear_space);
     }
-
+#endif
     if (AlwaysPreTouch) {
       pretouch_pages(head);
       pretouch_pages(tail);

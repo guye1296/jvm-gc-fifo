@@ -29,33 +29,34 @@
 #define NEEDS_CLEANUP
 
 // Use these macros for NUMA-aware GC
-#define REPLACE_MUTEX
+//#define REPLACE_MUTEX
 #define YOUNGGEN_8TIMES
 #define THREAD_AFFINITY
-#define NUMA_AWARE_STEALING
-#define NUMA_AWARE_C_HEAP
+//#define NUMA_AWARE_STEALING
+//#define NUMA_AWARE_C_HEAP
+//#define INTER_NODE_STEALING
 #define EXTRA_COUNTERS
+//#define BANDWIDTH_TEST
 
 #ifdef REPLACE_MUTEX
-#define NUMA_AWARE_TASKQ
+//#define NUMA_AWARE_TASKQ
 #define TERMINATOR_GCTASK
 #endif
 
 #if defined(YOUNGGEN_8TIMES) && defined(NUMA_AWARE_C_HEAP)
-#define INTER_NODE_MSG_Q
-#endif
-
-#if defined(INTER_NODE_MSG_Q)
-#define INTER_NODE_STEALING
+//#define INTER_NODE_MSG_Q
 #endif
 
 #ifdef YOUNGGEN_8TIMES
 #define OPTIMIZE_RESIZE
+#else
+#define FREE_USENUMA
 #endif
 
 #ifdef NUMA_AWARE_STEALING
 #define NUMA_AWARE_STEALING_OLD_GEN
 #endif
+
 // Makes a string of the argument (which is not macro-expanded)
 #define STR(a)  #a
 

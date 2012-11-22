@@ -2126,26 +2126,26 @@ void PSParallelCompact::invoke_no_policy(bool maximum_heap_compaction) {
             perm_gen->capacity_in_bytes());
         }
       }
-
+      int numa_nodes = UseNUMA ? os::numa_get_groups_num() : 1;
       // Don't check if the size_policy is ready here.  Let
       // the size_policy check that internally.
       if (UseAdaptiveGenerationSizePolicyAtMajorCollection &&
           ((gc_cause != GCCause::_java_lang_system_gc) ||
             UseAdaptiveSizePolicyWithSystemGC)) {
         // Calculate optimal free space amounts
-        assert(young_gen->max_size() >
-          young_gen->from_space()->capacity_in_bytes() +
-          young_gen->to_space()->capacity_in_bytes(),
+        assert((young_gen->max_size() / numa_nodes) >
+          (young_gen->from_space()->capacity_in_bytes() / numa_nodes) +
+          (young_gen->to_space()->capacity_in_bytes() / numa_nodes),
           "Sizes of space in young gen are out-of-bounds");
-        size_t max_eden_size = young_gen->max_size() -
-          young_gen->from_space()->capacity_in_bytes() -
-          young_gen->to_space()->capacity_in_bytes();
+        size_t max_eden_size = (young_gen->max_size() / numa_nodes) -
+          (young_gen->from_space()->capacity_in_bytes() / numa_nodes) -
+          (young_gen->to_space()->capacity_in_bytes() / numa_nodes);
         size_policy->compute_generation_free_space(
                               young_gen->used_in_bytes(),
                               young_gen->eden_space()->used_in_bytes(),
                               old_gen->used_in_bytes(),
                               perm_gen->used_in_bytes(),
-                              young_gen->eden_space()->capacity_in_bytes(),
+                              young_gen->eden_space()->capacity_in_bytes() / numa_nodes,
                               old_gen->max_gen_size(),
                               max_eden_size,
                               true /* full gc*/,

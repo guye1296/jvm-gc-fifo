@@ -32,6 +32,10 @@
 #include "oops/oop.inline.hpp"
 #include "oops/oop.psgc.inline.hpp"
 
+#ifdef BANDWIDTH_TEST
+#include "gc_implementation/parallelScavenge/gcTaskThread.hpp"
+#endif
+
 #ifdef NUMA_AWARE_STEALING
 #include "gc_implementation/parallelScavenge/gcTaskManager.hpp"
 #include "gc_implementation/parallelScavenge/gcTaskThread.hpp"
@@ -382,13 +386,18 @@ void PSPromotionManager::flush_labs() {
     PSScavenge::set_survivor_overflow(true);
   }
 }
-
+#ifdef BANDWIDTH_TEST
+static uint64_t read_tsc(void) {
+  uint32_t a, d;
+  __asm __volatile("rdtsc" : "=a" (a), "=d" (d));
+  return ((uint64_t) a) | (((uint64_t) d) << 32);
+}
+#endif
 //
 // This method is pretty bulky. It would be nice to split it up
 // into smaller submethods, but we need to be careful not to hurt
 // performance.
 //
-
 oop PSPromotionManager::copy_to_survivor_space(oop o) {
   assert(PSScavenge::should_scavenge(&o), "Sanity");
 
@@ -476,10 +485,18 @@ oop PSPromotionManager::copy_to_survivor_space(oop o) {
     }
 
     assert(new_obj != NULL, "allocation should have succeeded");
-
+#ifdef BANDWIDTH_TEST
+    ((GCTaskThread*)Thread::current())->bytes_read += new_obj_size;
+    ((GCTaskThread*)Thread::current())->bytes_write += new_obj_size;// + (64 / HeapWordSize); 
+    //The extra 64 bytes is for cache miss while reading the object header.
+    uint64_t a = read_tsc();
+#endif
     // Copy obj
     Copy::aligned_disjoint_words((HeapWord*)o, (HeapWord*)new_obj, new_obj_size);
-
+#ifdef BANDWIDTH_TEST
+    uint64_t b = read_tsc();
+    ((GCTaskThread*)Thread::current())->bytes_time += b - a;
+#endif
     // Now we have to CAS in the header.
     if (o->cas_forward_to(new_obj, test_mark)) {
       // We won any races, we "own" this object.
