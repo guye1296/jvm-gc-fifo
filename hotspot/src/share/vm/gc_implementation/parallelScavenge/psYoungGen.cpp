@@ -78,25 +78,24 @@ void PSYoungGen::initialize_work() {
     // spaces have been computed.
     SpaceMangler::mangle_region(cmr);
   }
-#ifndef FREE_USENUMA
+#ifdef YOUNGGEN_8TIMES
   if (UseNUMA) {
     _eden_space = new MutableNUMASpace(virtual_space()->alignment());
-#ifdef YOUNGGEN_8TIMES
-  //_from_space = new MutableSpace(virtual_space()->alignment());
-  //_to_space   = new MutableSpace(virtual_space()->alignment());
     _from_space = new MutableNUMASpace(virtual_space()->alignment());
     _to_space   = new MutableNUMASpace(virtual_space()->alignment());
-#endif
   } else {
+    // ShouldNotReachHere();
     _eden_space = new MutableSpace(virtual_space()->alignment());
-#ifdef YOUNGGEN_8TIMES
     _from_space = new MutableSpace(virtual_space()->alignment());
     _to_space   = new MutableSpace(virtual_space()->alignment());
-#endif
   }
-#endif //!FREE_USENUMA
-#ifndef YOUNGGEN_8TIMES
-    _eden_space = new MutableSpace(virtual_space()->alignment());
+#else //!YOUNGGEN_8TIMES
+#ifdef BASELINE_NUMA_SPACE
+  if (UseNUMA)
+    _eden_space = new MutableNUMASpace(virtual_space()->alignment());
+  else
+#endif
+  _eden_space = new MutableSpace(virtual_space()->alignment());
   _from_space = new MutableSpace(virtual_space()->alignment());
   _to_space   = new MutableSpace(virtual_space()->alignment());
 #endif

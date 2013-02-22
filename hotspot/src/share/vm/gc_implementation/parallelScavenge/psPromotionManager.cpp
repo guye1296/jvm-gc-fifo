@@ -180,13 +180,31 @@ void PSPromotionManager::pre_scavenge() {
   }
 }
 
+#ifdef EXTRA_COUNTERS
+extern unsigned long total_objects_copied;
+extern unsigned long total_remote_sent;
+#endif
+
 void PSPromotionManager::post_scavenge() {
   TASKQUEUE_STATS_ONLY(if (PrintGCDetails && ParallelGCVerbose) print_stats());
+#ifdef EXTRA_COUNTERS
+  unsigned long temp_obj_copied = 0;
+  unsigned long temp_remote_sent = 0;
+#endif
   for (uint i = 0; i < ParallelGCThreads + 1; i++) {
     PSPromotionManager* manager = manager_array(i);
     assert(manager->claimed_stack_depth()->is_empty(), "should be empty");
     manager->flush_labs();
+#ifdef EXTRA_COUNTERS
+    temp_obj_copied += manager->_objects_copied;
+    temp_remote_sent += manager->_remote_sent;
+    manager->_objects_copied = manager->_remote_sent = 0;
+#endif
   }
+#ifdef EXTRA_COUNTERS
+  total_objects_copied += temp_obj_copied;
+  total_remote_sent += temp_remote_sent;
+#endif
 }
 
 #if TASKQUEUE_STATS
@@ -269,7 +287,9 @@ PSPromotionManager::PSPromotionManager() {
   _array_chunk_size = ParGCArrayScanChunk;
   // let's choose 1.5x the chunk size
   _min_array_size_for_chunking = 3 * _array_chunk_size / 2;
-
+#ifdef EXTRA_COUNTERS
+  _remote_sent = _objects_copied = 0;
+#endif
   reset();
 }
 
@@ -500,6 +520,9 @@ oop PSPromotionManager::copy_to_survivor_space(oop o) {
     // Now we have to CAS in the header.
     if (o->cas_forward_to(new_obj, test_mark)) {
       // We won any races, we "own" this object.
+#ifdef EXTRA_COUNTERS
+      _objects_copied++;
+#endif
       assert(new_obj == o->forwardee(), "Sanity");
 
       // Increment age if obj still in new generation. Now that

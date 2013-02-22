@@ -105,7 +105,7 @@ void MutableSpace::initialize(MemRegion mr,
 
   assert(Universe::on_page_boundary(mr.start()) && Universe::on_page_boundary(mr.end()),
          "invalid space boundaries");
-#ifdef FREE_USENUMA
+#ifdef NO_INTERLEAVING
   if (setup_pages && AlwaysPreTouch) {
 #else
   if (setup_pages && (UseNUMA || AlwaysPreTouch)) {
@@ -144,7 +144,7 @@ void MutableSpace::initialize(MemRegion mr,
       tail = MemRegion(intersection.end(), intersection.end() + tail_size);
     }
     assert(mr.contains(head) && mr.contains(tail), "Sanity");
-#ifndef FREE_USENUMA
+#ifndef NO_INTERLEAVING
     if (UseNUMA) {
       numa_setup_pages(head, clear_space);
       numa_setup_pages(tail, clear_space);

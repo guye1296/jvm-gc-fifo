@@ -115,9 +115,9 @@ void ThreadRootsTask::do_it(GCTaskManager* manager, uint which) {
   PSPromotionManager* pm = PSPromotionManager::gc_thread_promotion_manager(which);
   PSScavengeRootsClosure roots_closure(pm);
   CodeBlobToOopClosure roots_in_blobs(&roots_closure, /*do_marking=*/ true);
-#ifdef INTER_NODE_MSG_Q
+/*#ifdef INTER_NODE_MSG_Q
   ((GCTaskThread*)Thread::current())->_msg_q_enabled = false;
-#endif
+#endif*/
   if (_java_thread != NULL)
     _java_thread->oops_do(&roots_closure, &roots_in_blobs);
 
@@ -125,13 +125,13 @@ void ThreadRootsTask::do_it(GCTaskManager* manager, uint which) {
     _vm_thread->oops_do(&roots_closure, &roots_in_blobs);
 
   // Do the real work
-#ifdef INTER_NODE_MSG_Q
+/*#ifdef INTER_NODE_MSG_Q
   pm->drain_stacks_depth(true);
   if (UseNUMA && !Thread::current()->is_VM_thread())
     ((GCTaskThread*)Thread::current())->_msg_q_enabled = true;
-#else
+#else*/
   pm->drain_stacks(false);
-#endif
+//#endif
 }
 
 //

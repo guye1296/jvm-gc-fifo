@@ -117,6 +117,9 @@ void GCTaskThread::run() {
   if (UseNUMA)
     Thread::current()->set_lgrp_id(os::numa_get_group_id());
 #endif
+#ifdef INTER_NODE_MSG_Q
+  _msg_q_enabled = true;
+#endif
 
   // Part of thread setup.
   // ??? Are these set up once here to make subsequent ones fast?

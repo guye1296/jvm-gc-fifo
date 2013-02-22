@@ -29,33 +29,74 @@
 #define NEEDS_CLEANUP
 
 // Use these macros for NUMA-aware GC
-//#define REPLACE_MUTEX
-#define YOUNGGEN_8TIMES
-#define THREAD_AFFINITY
-//#define NUMA_AWARE_STEALING
-//#define NUMA_AWARE_C_HEAP
-//#define INTER_NODE_STEALING
-#define EXTRA_COUNTERS
-//#define BANDWIDTH_TEST
+
+// Use this macro to use lock-free task queue and lazy thread parking
+#define REPLACE_MUTEX
+
+// Must use -XX:+UseNUMA command line option with all the following
+// options.
 
 #ifdef REPLACE_MUTEX
+// Use this macro to enable per-node task queues. Use -XX:+UseGCTaskAffinity
+// command line option to use it.
 //#define NUMA_AWARE_TASKQ
+
+// Use this macro to make lock-free task-queue work with weak references. 
 #define TERMINATOR_GCTASK
 #endif
 
-#if defined(YOUNGGEN_8TIMES) && defined(NUMA_AWARE_C_HEAP)
-//#define INTER_NODE_MSG_Q
-#endif
+// Use this macro to fix the NUMA heap layout issue of young generation.
+// This macro should be used for fragmented space heap layout.
+#define YOUNGGEN_8TIMES
 
 #ifdef YOUNGGEN_8TIMES
+// This macro fixes the resize problem
 #define OPTIMIZE_RESIZE
 #else
-#define FREE_USENUMA
+// This macro is to use baseline NUMA heap layout.
+// In order to enable interleaved-space heap layout, this option
+// must be disabled.
+//#define BASELINE_NUMA_SPACE
 #endif
 
+// Use this macro to pin the GC threads using -XX:+BindGCTaskThreadsToCPUs
+// command line option.
+#define THREAD_AFFINITY
+
+// Use this option to use NUMA-aware C heap for VM-internal data structures.
+//#define NUMA_AWARE_C_HEAP
+
+// Use this option for making work stealing NUMA-aware i.e. GC-threads steal
+// from node-local threads only.
+//#define NUMA_AWARE_STEALING
+
 #ifdef NUMA_AWARE_STEALING
-#define NUMA_AWARE_STEALING_OLD_GEN
+#if defined(YOUNGGEN_8TIMES) && defined(NUMA_AWARE_C_HEAP)
+// Use this macro to enable segregated space implementation
+#define INTER_NODE_MSG_Q
 #endif
+
+// USe this option to use NUMA-aware work stealing in old generation collection
+// as well.
+#define NUMA_AWARE_STEALING_OLD_GEN
+
+// This macro enables inter-node stealing within NUMA-aware stealing
+// for the purpose of load balancing in case of master-slave apps.
+//#define INTER_NODE_STEALING
+#endif //NUMA_AWARE_STEALING
+
+// This macro is to print counters at the end of execution.
+#define EXTRA_COUNTERS
+
+// This is to print badwidth numbers. Not very useful.
+//#define BANDWIDTH_TEST
+
+/* Uncomment the following macro to ensure that no space gets
+* interleaved heap layout in any case. This is required in cases
+* where UseNUMA must be true to let some feature to work, but at
+* the same time we need to test the basic heap layout.
+*/
+//#define NO_INTERLEAVING
 
 // Makes a string of the argument (which is not macro-expanded)
 #define STR(a)  #a

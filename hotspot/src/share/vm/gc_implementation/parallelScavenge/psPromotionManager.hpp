@@ -95,7 +95,10 @@ class PSPromotionManager : public CHeapObj {
 
   uint                                _array_chunk_size;
   uint                                _min_array_size_for_chunking;
-
+#ifdef EXTRA_COUNTERS
+  unsigned long			      _remote_sent;
+  unsigned long			      _objects_copied;
+#endif
   // Accessors
   static PSOldGen* old_gen()         { return _old_gen; }
   static MutableSpace* young_space() { return _young_space; }
@@ -201,7 +204,7 @@ class PSPromotionManager : public CHeapObj {
            "lgrp_id should be set by now");
     void* o = (void*) oopDesc::load_decode_heap_oop_not_null(p);
     uint min = 0;
-    uint max = (numa_node_count() << 1) - 1;
+    uint max = numa_node_count() << 1;
     uint mid;
     while (min + 1 != max) {
       mid = (min + max) >> 1;
@@ -217,6 +220,9 @@ class PSPromotionManager : public CHeapObj {
     message_queue(min)->enqueue(p, min);
 #else
     message_queue(min)->enqueue(p);
+#endif
+#ifdef EXTRA_COUNTERS
+    _remote_sent++;
 #endif
     return true;
   }
