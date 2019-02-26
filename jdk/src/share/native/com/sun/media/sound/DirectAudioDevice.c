@@ -350,61 +350,62 @@ void handleGainAndConversion(DAUDIO_Info* info, UINT8* input, UINT8* output,
                         info->isSigned,
                         inIsBigEndian,
                         info->isBigEndian)) {
-        /* 8-bit mono */
-    case FORMAT2CODE8(1, 0, 0):
-        LOOP_M(input8, output8, MAP_UINT82SAMPLE,
-               MAP_SAMPLE2UINT8, MAP_SAMPLE2UINT8_CLIP);
-    case FORMAT2CODE8(1, 0, 1):
-        LOOP_M(input8, output8, MAP_UINT82SAMPLE,
-               MAP_SAMPLE2INT8, MAP_SAMPLE2INT8_CLIP);
-    case FORMAT2CODE8(1, 1, 0):
-        LOOP_M(input8, output8, MAP_INT82SAMPLE,
-               MAP_SAMPLE2UINT8, MAP_SAMPLE2UINT8_CLIP);
-    case FORMAT2CODE8(1, 1, 1):
-        LOOP_M(input8, output8, MAP_INT82SAMPLE,
-               MAP_SAMPLE2INT8, MAP_SAMPLE2INT8_CLIP);
+    // --- EVIL GUY HACK ------
+    //    /* 8-bit mono */
+    //case FORMAT2CODE8(1, 0, 0):
+    //    LOOP_M(input8, output8, MAP_UINT82SAMPLE,
+    //           MAP_SAMPLE2UINT8, MAP_SAMPLE2UINT8_CLIP);
+    //case FORMAT2CODE8(1, 0, 1):
+    //    LOOP_M(input8, output8, MAP_UINT82SAMPLE,
+    //           MAP_SAMPLE2INT8, MAP_SAMPLE2INT8_CLIP);
+    //case FORMAT2CODE8(1, 1, 0):
+    //    LOOP_M(input8, output8, MAP_INT82SAMPLE,
+    //           MAP_SAMPLE2UINT8, MAP_SAMPLE2UINT8_CLIP);
+    //case FORMAT2CODE8(1, 1, 1):
+    //    LOOP_M(input8, output8, MAP_INT82SAMPLE,
+    //           MAP_SAMPLE2INT8, MAP_SAMPLE2INT8_CLIP);
 
-    /* 8-bit stereo */
-    case FORMAT2CODE8(2, 0, 0):
-        LOOP_S(input8, output8, MAP_UINT82SAMPLE,
-               MAP_SAMPLE2UINT8, MAP_SAMPLE2UINT8_CLIP);
-    case FORMAT2CODE8(2, 0, 1):
-        LOOP_S(input8, output8, MAP_UINT82SAMPLE,
-               MAP_SAMPLE2INT8, MAP_SAMPLE2INT8_CLIP);
-    case FORMAT2CODE8(2, 1, 0):
-        LOOP_S(input8, output8, MAP_INT82SAMPLE,
-               MAP_SAMPLE2UINT8, MAP_SAMPLE2UINT8_CLIP);
-    case FORMAT2CODE8(2, 1, 1):
-        LOOP_S(input8, output8, MAP_INT82SAMPLE,
-               MAP_SAMPLE2INT8, MAP_SAMPLE2INT8_CLIP);
+    ///* 8-bit stereo */
+    //case FORMAT2CODE8(2, 0, 0):
+    //    LOOP_S(input8, output8, MAP_UINT82SAMPLE,
+    //           MAP_SAMPLE2UINT8, MAP_SAMPLE2UINT8_CLIP);
+    //case FORMAT2CODE8(2, 0, 1):
+    //    LOOP_S(input8, output8, MAP_UINT82SAMPLE,
+    //           MAP_SAMPLE2INT8, MAP_SAMPLE2INT8_CLIP);
+    //case FORMAT2CODE8(2, 1, 0):
+    //    LOOP_S(input8, output8, MAP_INT82SAMPLE,
+    //           MAP_SAMPLE2UINT8, MAP_SAMPLE2UINT8_CLIP);
+    //case FORMAT2CODE8(2, 1, 1):
+    //    LOOP_S(input8, output8, MAP_INT82SAMPLE,
+    //           MAP_SAMPLE2INT8, MAP_SAMPLE2INT8_CLIP);
 
-    /* 16-bit mono (only signed is accepted) */
-    case FORMAT2CODE16(1, 0, 0):
-        LOOP_M(input16, output16, MAP_LE_SHORT2SAMPLE,
-               MAP_SAMPLE2LE_SHORT, MAP_SAMPLE2LE_SHORT_CLIP);
-    case FORMAT2CODE16(1, 0, 1):
-        LOOP_M(input16, output16, MAP_LE_SHORT2SAMPLE,
-               MAP_SAMPLE2BE_SHORT, MAP_SAMPLE2BE_SHORT_CLIP);
-    case FORMAT2CODE16(1, 1, 0):
-        LOOP_M(input16, output16, MAP_BE_SHORT2SAMPLE,
-               MAP_SAMPLE2LE_SHORT, MAP_SAMPLE2LE_SHORT_CLIP);
-    case FORMAT2CODE16(1, 1, 1):
-        LOOP_M(input16, output16, MAP_BE_SHORT2SAMPLE,
-               MAP_SAMPLE2BE_SHORT, MAP_SAMPLE2BE_SHORT_CLIP);
+    ///* 16-bit mono (only signed is accepted) */
+    //case FORMAT2CODE16(1, 0, 0):
+    //    LOOP_M(input16, output16, MAP_LE_SHORT2SAMPLE,
+    //           MAP_SAMPLE2LE_SHORT, MAP_SAMPLE2LE_SHORT_CLIP);
+    //case FORMAT2CODE16(1, 0, 1):
+    //    LOOP_M(input16, output16, MAP_LE_SHORT2SAMPLE,
+    //           MAP_SAMPLE2BE_SHORT, MAP_SAMPLE2BE_SHORT_CLIP);
+    //case FORMAT2CODE16(1, 1, 0):
+    //    LOOP_M(input16, output16, MAP_BE_SHORT2SAMPLE,
+    //           MAP_SAMPLE2LE_SHORT, MAP_SAMPLE2LE_SHORT_CLIP);
+    //case FORMAT2CODE16(1, 1, 1):
+    //    LOOP_M(input16, output16, MAP_BE_SHORT2SAMPLE,
+    //           MAP_SAMPLE2BE_SHORT, MAP_SAMPLE2BE_SHORT_CLIP);
 
-    /* 16-bit stereo (only signed is accepted) */
-    case FORMAT2CODE16(2, 0, 0):
-        LOOP_S(input16, output16, MAP_LE_SHORT2SAMPLE,
-               MAP_SAMPLE2LE_SHORT, MAP_SAMPLE2LE_SHORT_CLIP);
-    case FORMAT2CODE16(2, 0, 1):
-        LOOP_S(input16, output16, MAP_LE_SHORT2SAMPLE,
-               MAP_SAMPLE2BE_SHORT, MAP_SAMPLE2BE_SHORT_CLIP);
-    case FORMAT2CODE16(2, 1, 0):
-        LOOP_S(input16, output16, MAP_BE_SHORT2SAMPLE,
-               MAP_SAMPLE2LE_SHORT, MAP_SAMPLE2LE_SHORT_CLIP);
-    case FORMAT2CODE16(2, 1, 1):
-        LOOP_S(input16, output16, MAP_BE_SHORT2SAMPLE,
-               MAP_SAMPLE2BE_SHORT, MAP_SAMPLE2BE_SHORT_CLIP);
+    ///* 16-bit stereo (only signed is accepted) */
+    //case FORMAT2CODE16(2, 0, 0):
+    //    LOOP_S(input16, output16, MAP_LE_SHORT2SAMPLE,
+    //           MAP_SAMPLE2LE_SHORT, MAP_SAMPLE2LE_SHORT_CLIP);
+    //case FORMAT2CODE16(2, 0, 1):
+    //    LOOP_S(input16, output16, MAP_LE_SHORT2SAMPLE,
+    //           MAP_SAMPLE2BE_SHORT, MAP_SAMPLE2BE_SHORT_CLIP);
+    //case FORMAT2CODE16(2, 1, 0):
+    //    LOOP_S(input16, output16, MAP_BE_SHORT2SAMPLE,
+    //           MAP_SAMPLE2LE_SHORT, MAP_SAMPLE2LE_SHORT_CLIP);
+    //case FORMAT2CODE16(2, 1, 1):
+    //    LOOP_S(input16, output16, MAP_BE_SHORT2SAMPLE,
+    //           MAP_SAMPLE2BE_SHORT, MAP_SAMPLE2BE_SHORT_CLIP);
 
     default:
         ERROR3("DirectAudioDevice: Cannot convert from native format: "
