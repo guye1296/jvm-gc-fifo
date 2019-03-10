@@ -235,9 +235,9 @@ OS_VERSION := $(shell uname -r)
 EMPTY_IF_NOT_SUPPORTED = $(filter $(SUPPORTED_OS_VERSION),$(OS_VERSION))
 
 check_os_version:
-ifeq ($(DISABLE_HOTSPOT_OS_VERSION_CHECK)$(EMPTY_IF_NOT_SUPPORTED),)
-	$(QUIETLY) >&2 echo "*** This OS is not supported:" `uname -a`; exit 1;
-endif
+#ifeq ($(DISABLE_HOTSPOT_OS_VERSION_CHECK)$(EMPTY_IF_NOT_SUPPORTED),)
+#	$(QUIETLY) >&2 echo "*** This OS is not supported:" `uname -a`; exit 1;
+#endif
 
 # jvmti.make requires XSLT (J2SE 1.4.x or newer):
 XSLT_CHECK	= $(REMOTE) $(RUN.JAVAP) javax.xml.transform.TransformerFactory
