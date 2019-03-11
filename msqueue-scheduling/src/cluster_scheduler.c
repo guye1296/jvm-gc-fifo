@@ -36,7 +36,7 @@ __thread ThreadCasPerfCounters thread_cas_counters __attribute__ ((aligned (128)
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-inline void cluster_scheduler_thread_start(long thread_id) {
+void cluster_scheduler_thread_start(long thread_id) {
     threadId = thread_id;
 }
 
@@ -53,12 +53,12 @@ inline bool NEW_CASPTR(void *A, void *B, void *C) {
 #endif
 }
 
-inline void cluster_scheduler_start_op(AtomicScheduler* pScheduler, volatile void *atomic_ptr){
+void cluster_scheduler_start_op(AtomicScheduler* pScheduler, volatile void *atomic_ptr){
 	AtomicWrapper* atomic_wrapper = atomic_var_to_atomic_wrapper(pScheduler, atomic_ptr);
 	cluster_scheduler_start_op_int(atomic_wrapper,threadId);
 }
 
-inline void cluster_scheduler_end_op(AtomicScheduler* pScheduler, volatile void *atomic_ptr){
+void cluster_scheduler_end_op(AtomicScheduler* pScheduler, volatile void *atomic_ptr){
 	AtomicWrapper* atomic_wrapper = atomic_var_to_atomic_wrapper(pScheduler, atomic_ptr);
 	cluster_scheduler_end_op_int(atomic_wrapper,threadId);
 }
@@ -66,7 +66,7 @@ inline void cluster_scheduler_end_op(AtomicScheduler* pScheduler, volatile void 
 //--------------------------------------------------------------------------------------------------------------------------
 
 #if SCHEDULING_METHOD!=4
-inline void cluster_scheduler_init(AtomicScheduler* pScheduler, volatile void *atomic_ptr1, volatile void *atomic_ptr2)
+void cluster_scheduler_init(AtomicScheduler* pScheduler, volatile void *atomic_ptr1, volatile void *atomic_ptr2)
 {
     AtomicWrapper* atomic_wrapper;
 
@@ -121,7 +121,7 @@ inline AtomicWrapper* atomic_var_to_atomic_wrapper(AtomicScheduler* pScheduler, 
 	*/
 }
 
-inline void cluster_scheduler_print_counters(AtomicScheduler* pScheduler) {
+void cluster_scheduler_print_counters(AtomicScheduler* pScheduler) {
 	/*
 	if (g_map_from_ptr_to_atomic_wrapper[0]->atomic_ptr1) {
 		atomic_wrapper_print_counters(g_map_from_ptr_to_atomic_wrapper[0]);
