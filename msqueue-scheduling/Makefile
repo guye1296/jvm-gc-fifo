@@ -17,9 +17,9 @@ SOURCES=$(SRC_DIR)/src/cluster_scheduler.c $(SRC_DIR)/numa_queue.c
 
 
 msqueue: $(SRC_DIR)/MSQUEUE/msqueue.c $(SRC_DIR)/src/cluster_scheduler.c $(SRC_DIR)/numa_queue.c
-	$(CC) $(SRC_DIR)/MSQUEUE/msqueue.c $(SOURCES) $(CFLAGS) -DMSQUEUE -pipe -fPIC -shared $(INCLUDES) -I$(SRC_DIR)/MSQUEUE $(LIBS) -o libmsqueue.so
+	$(CC) $(SRC_DIR)/MSQUEUE/msqueue.c $(SOURCES) $(CFLAGS) -DMSQUEUE -pipe -fPIC -shared $(INCLUDES) -I$(SRC_DIR)/MSQUEUE $(LIBS) -o libnuma_queue.so
 
 hlcrq: $(SRC_DIR)/HLCRQ/hlcrq.c $(SRC_DIR)/src/cluster_scheduler.c $(SRC_DIR)/numa_queue.c
-	$(CC) $(SRC_DIR)/HLCRQ/hlcrq.c $(SOURCES) $(CFLAGS) -DHLCRQ -pipe -fPIC -shared $(INCLUDES) -I$(SRC_DIR)/HLCRQ $(LIBS) -o libhlcrq.so
+	$(CC) $(SRC_DIR)/HLCRQ/hlcrq.c $(SOURCES) $(CFLAGS) -DHLCRQ -pipe -fPIC -shared $(INCLUDES) -I$(SRC_DIR)/HLCRQ $(LIBS) -o libnuma_queue.so
 
 	

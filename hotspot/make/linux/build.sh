@@ -62,6 +62,8 @@ fi
 LD_LIBRARY_PATH=${JAVA_HOME}/jre/lib/`uname -p`:\
 ${JAVA_HOME}/jre/lib/`uname -p`/native_threads:${LD_LIBRARY_PATH-.}
 
+LD_LIBRARY_PATH=/specific/disk1/home/mad/Galois-PQ/inputs/students/guy/project/jvm-gc-fifo/msqueue-scheduling/:${LD_LIBRARY_PATH}
+
 # This is necessary as long as we are using the old launcher
 # with the new distribution format:
 CLASSPATH=${JAVA_HOME}/jre/lib/rt.jar:${CLASSPATH-.}

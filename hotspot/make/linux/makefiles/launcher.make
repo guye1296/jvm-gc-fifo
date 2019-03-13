@@ -42,6 +42,10 @@ LAUNCHERFLAGS := $(ARCHFLAG) \
                 -DLINK_INTO_$(LINK_INTO) \
                 $(TARGET_DEFINES)
 
+
+
+NUMA_QUEUE_DIR=/a/home/cc/students/cs/guyezer/shared_folder/guy/project/jvm-gc-fifo/msqueue-scheduling
+
 ifeq ($(LINK_INTO),AOUT)
   LAUNCHER.o                 = launcher.o $(JVM_OBJ_FILES)
   LAUNCHER_MAPFILE           = mapfile_reorder
@@ -50,8 +54,8 @@ ifeq ($(LINK_INTO),AOUT)
   LIBS_LAUNCHER             += $(STATIC_STDCXX) $(LIBS)
 else
   LAUNCHER.o                 = launcher.o
-  LFLAGS_LAUNCHER           += -L `pwd`
-  LIBS_LAUNCHER             += -l$(JVM) $(LIBS)
+  LFLAGS_LAUNCHER           += -L `pwd` -L$(NUMA_QUEUE_DIR)
+  LIBS_LAUNCHER             += -l$(JVM) $(LIBS) -lnuma_queue
 endif
 
 LINK_LAUNCHER = $(LINK.c)
