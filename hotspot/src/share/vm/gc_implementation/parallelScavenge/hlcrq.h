@@ -72,5 +72,3 @@ void SHARED_OBJECT_INIT(hlcrq_t* p_hlcrq);
 
 void enqueue(hlcrq_t* p_hlcrq, Object arg, int pid);
 Object dequeue(hlcrq_t* p_hlcrq, int pid);
-
-}
