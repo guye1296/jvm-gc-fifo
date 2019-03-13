@@ -169,7 +169,7 @@ inline int close_q(RingQueue *rq, const uint64_t t, const int tries) {
         return BIT_TEST_AND_SET(&rq->tail, 63);
 }
 
-inline void enqueue(hlcrq_t* p_hlcrq, Object arg, int pid) {
+void enqueue(hlcrq_t* p_hlcrq, Object arg, int pid) {
 
     int try_close = 0;
 
@@ -281,7 +281,7 @@ alloc:
     }
 }
 
-inline Object dequeue(hlcrq_t* p_hlcrq, int pid) {
+Object dequeue(hlcrq_t* p_hlcrq, int pid) {
 
     while (1) {
         RingQueue *rq = p_hlcrq->Head;

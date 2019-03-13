@@ -45,8 +45,8 @@ void free_node(volatile node_t* node);
 
 void SHARED_OBJECT_INIT(queue_t* p_msqueue);
 
-inline void enqueue(queue_t* p_msqueue, Object arg, int pid);
+void enqueue(queue_t* p_msqueue, Object arg, int pid);
 
-inline Object dequeue(queue_t* p_msqueue, int pid);
+Object dequeue(queue_t* p_msqueue, int pid);
 
 #endif

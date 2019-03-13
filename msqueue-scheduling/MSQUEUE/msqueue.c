@@ -59,7 +59,7 @@ void SHARED_OBJECT_INIT(queue_t* p_msqueue) {
 }
 
 
-inline void enqueue(queue_t* p_msqueu, Object arg, int pid) {
+void enqueue(queue_t* p_msqueu, Object arg, int pid) {
 	node_t* node = new_node();	// Allocate a new node from the free list
 	volatile node_t* tail = null;
 	node_t* next = null;
@@ -100,7 +100,7 @@ inline void enqueue(queue_t* p_msqueu, Object arg, int pid) {
 }
 
 
-inline Object dequeue(queue_t* p_msqueu, int pid) {
+Object dequeue(queue_t* p_msqueu, int pid) {
 	volatile node_t *head, *tail, *next;
     Object value;
 

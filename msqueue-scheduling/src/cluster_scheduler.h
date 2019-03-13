@@ -61,13 +61,13 @@ typedef struct _AtomicScheduler{
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-inline void cluster_scheduler_thread_start(long thread_id);
+void cluster_scheduler_thread_start(long thread_id);
 
-inline void cluster_scheduler_start_op(AtomicScheduler* pScheduler, volatile void *atomic_ptr);
+void cluster_scheduler_start_op(AtomicScheduler* pScheduler, volatile void *atomic_ptr);
 
-inline void cluster_scheduler_end_op(AtomicScheduler* pScheduler, volatile void *atomic_ptr);
+void cluster_scheduler_end_op(AtomicScheduler* pScheduler, volatile void *atomic_ptr);
 
-inline void cluster_scheduler_init(AtomicScheduler* pScheduler, volatile void *algorithm_contention_var1, volatile void *algorithm_contention_var2);
+void cluster_scheduler_init(AtomicScheduler* pScheduler, volatile void *algorithm_contention_var1, volatile void *algorithm_contention_var2);
 
 inline struct _AtomicWrapper* atomic_var_to_atomic_wrapper(AtomicScheduler* pScheduler, volatile void *atomic_ptr);
 
@@ -79,7 +79,7 @@ inline void cluster_scheduler_start_op_int(struct _AtomicWrapper* atomic_wrapper
 
 inline void cluster_scheduler_end_op_int(struct _AtomicWrapper* atomic_wrapper, long thread_id);
 
-inline void cluster_scheduler_print_counters(AtomicScheduler* pScheduler);
+void cluster_scheduler_print_counters(AtomicScheduler* pScheduler);
 
 inline bool NEW_CASPTR(void *A, void *B, void *C);
 

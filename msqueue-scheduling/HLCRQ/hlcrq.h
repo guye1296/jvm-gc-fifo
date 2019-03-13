@@ -71,6 +71,6 @@ extern __thread uint64_t myunsafes;
 
 void SHARED_OBJECT_INIT(hlcrq_t* p_hlcrq);
 
-inline void enqueue(hlcrq_t* p_hlcrq, Object arg, int pid);
-inline Object dequeue(hlcrq_t* p_hlcrq, int pid);
+void enqueue(hlcrq_t* p_hlcrq, Object arg, int pid);
+Object dequeue(hlcrq_t* p_hlcrq, int pid);
 
