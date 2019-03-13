@@ -38,7 +38,9 @@
 // GCTask
 //
 
+extern "C" {
 #include "numa_queue.h"
+}
 
 const char* GCTask::Kind::to_string(kind value) {
   const char* result = "unknown GCTask kind";
