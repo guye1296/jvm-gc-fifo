@@ -9,8 +9,8 @@ scheduling_method_num=0
 SRC_DIR= $(shell pwd)
 CC=gcc
 CFLAGS:=-g -O3 -msse3 -ftree-vectorize -rdynamic -ftree-vectorizer-verbose=0 -finline-functions -lpthread -march=native -mtune=native -DN_THREADS=$(n_threads) -DUSE_CPUS=$(use_cpus) -DMAX_WORK=$(max_work) -DSCHEDULING_METHOD=$(scheduling_method_num) -D_GNU_SOURCE 
-INCLUDES=-I$(SRC_DIR)/. -I$(SRC_DIR)/src -I$(SRC_DIR)/includes -I$(SRC_DIR)/papi/src   
-LIBS=-Wl,-rpath-link,$(SRC_DIR)/papi/src -Wl,-rpath,$(SRC_DIR)/papi/src -L$(SRC_DIR)/papi/src -lpapi
+INCLUDES=-I$(SRC_DIR)/. -I$(SRC_DIR)/src -I$(SRC_DIR)/includes -I$(SRC_DIR)/papi/include   
+LIBS=-Wl,-rpath-link,$(SRC_DIR)/papi/src -Wl,-rpath,$(SRC_DIR)/papi/src -L$(SRC_DIR)/papi/lib -lpapi
 
 
 SOURCES=$(SRC_DIR)/src/cluster_scheduler.c $(SRC_DIR)/numa_queue.c
