@@ -171,7 +171,7 @@ GCTaskQueue::~GCTaskQueue() {
 #endif
 
 void GCTaskQueue::destruct() {
-  // Nothing to do.
+    free(context);
 }
 
 void GCTaskQueue::destroy(GCTaskQueue* that) {
@@ -194,8 +194,7 @@ void GCTaskQueue::destroy(GCTaskQueue* that) {
 }
 
 void GCTaskQueue::initialize() {
-  set_insert_end(NULL);
-  set_remove_end(NULL);
+  context = create_global_context();
   set_length(0);
 }
 
@@ -209,18 +208,7 @@ void GCTaskQueue::enqueue(GCTask* task) {
     print("before:");
   }
   assert(task != NULL, "shouldn't have null task");
-  assert(task->newer() == NULL, "shouldn't be on queue");
-  task->set_newer(NULL);
-#ifndef REPLACE_MUTEX
-  assert(task->older() == NULL, "shouldn't be on queue");
-  task->set_older(insert_end());
-#endif
-  if (is_empty()) {
-    set_remove_end(task);
-  } else {
-    insert_end()->set_newer(task);
-  }
-  set_insert_end(task);
+  numa_enqueue(context, (void*)task, 0);
   increment_length();
   if (TraceGCTaskQueue) {
     print("after:");
@@ -242,23 +230,16 @@ void GCTaskQueue::enqueue(GCTaskQueue* list) {
     return;
   }
   uint list_length = list->length();
-  if (is_empty()) {
-    // Enqueuing to empty list: just acquire elements.
-    set_insert_end(list->insert_end());
-    set_remove_end(list->remove_end());
-    set_length(list_length);
-  } else {
-    // Prepend argument list to our queue.
-#ifndef REPLACE_MUTEX
-    list->remove_end()->set_older(insert_end());
-#endif
-    insert_end()->set_newer(list->remove_end());
-    set_insert_end(list->insert_end());
-    // empty the argument list.
+
+  GCTask* task = list->dequeue();
+  while (task != NULL) {
+      enqueue(task);
+      GCTask* task = list->dequeue();
   }
+
   set_length(length() + list_length);
   
-  list->initialize();
+  list->set_length(0);
   if (TraceGCTaskQueue) {
     print("after:");
     list->print("list:");
@@ -272,13 +253,15 @@ GCTask* GCTaskQueue::dequeue() {
                   " GCTaskQueue::dequeue()", this);
     print("before:");
   }
-#ifndef REPLACE_MUTEX
-  assert(!is_empty(), "shouldn't dequeue from empty list");
-  GCTask* result = remove();
-  assert(result != NULL, "shouldn't have NULL task");
-#else
-  GCTask* result = remove();
-#endif
+
+  GCTask* result;
+  Object obj = numa_dequeue(context, 0);
+
+  if (obj != -1)
+      result = (GCTask*)obj;
+  else
+      result = NULL;
+
   if (TraceGCTaskQueue) {
     tty->print_cr("    return: " INTPTR_FORMAT, result);
     print("after:");

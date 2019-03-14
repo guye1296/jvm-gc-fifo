@@ -1,12 +1,12 @@
 #include "numa_queue.h"
 
-extern inline void numa_enqueue(Globals* context, long thread_id, long task) {
+extern inline void numa_enqueue(Globals* context, Object arg, int pid) {
 #ifdef MSQUEUE
     cluster_scheduler_start_op(&context->atomic_scheduler, &context->queue.Tail);
 #else
     cluster_scheduler_start_op(&context->atomic_scheduler, &context->queue.Tail->tail);
 #endif
-    enqueue(&context->queue, thread_id, task);
+    enqueue(&context->queue, arg, pid);
 #ifdef MSQUEUE
     cluster_scheduler_end_op(&context->atomic_scheduler, &context->queue.Tail);
 #else
@@ -15,20 +15,23 @@ extern inline void numa_enqueue(Globals* context, long thread_id, long task) {
     spin_work();
 }
 
-extern inline void numa_dequeue(Globals* context, long task){
+extern inline Object numa_dequeue(Globals* context, int pid){
+    Object obj;
+
 #ifdef MSQUEUE
     cluster_scheduler_start_op(&context->atomic_scheduler, &context->queue.Head);
 #else
     cluster_scheduler_start_op(&context->atomic_scheduler, &context->queue.Head->head);
 #endif
-    // FIXME
-    dequeue(&context->queue, task);
+    obj = dequeue(&context->queue, pid);
 #ifdef MSQUEUE
     cluster_scheduler_end_op(&context->atomic_scheduler, &context->queue.Tail);
 #else
     cluster_scheduler_end_op(&context->atomic_scheduler, &context->queue.Tail->tail);
 #endif
     spin_work();
+
+    return obj;
 }
 
 extern inline Globals* create_global_context() {

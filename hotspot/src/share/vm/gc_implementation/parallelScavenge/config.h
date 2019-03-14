@@ -117,7 +117,7 @@ static inline int pid_to_cluster(const int pid) {
 #define DISABLE_BACKOFF
 
 
-#define Object                     int32_t
+#define Object                     size_t
 
 // Definition: RetVal
 // ------------------

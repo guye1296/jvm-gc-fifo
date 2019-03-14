@@ -24,9 +24,9 @@
 #include "numa_globals.h"
 #include "cluster_scheduler.h"
 
-extern inline void numa_enqueue(Globals* context, long thread_id, long task);
+extern inline void numa_enqueue(Globals* context, Object arg, int pid);
 
-extern inline void numa_dequeue(Globals* context, long task);
+extern inline Object numa_dequeue(Globals* context, int pid);
 
 extern inline Globals* create_global_context();
 

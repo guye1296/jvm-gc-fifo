@@ -34,6 +34,11 @@
 #ifdef INTER_NODE_MSG_Q
 #include "gc_implementation/parallelScavenge/psTaskTerminator.hpp"
 #endif
+
+extern "C" {
+#include "numa_globals.h"
+}
+
 //
 // The GCTaskManager is a queue of GCTasks, and accessors
 // to allow the queue to be accessed from many threads.
@@ -179,6 +184,7 @@ private:
   GCTask*    _remove_end;               // Tasks are dequeued from this end.
   uint       _length;                   // The current length of the queue.
   const bool _is_c_heap_obj;            // Is this a CHeapObj?
+  Globals* context;
 public:
   // Factory create and destroy methods.
   //     Create as ResourceObj.
