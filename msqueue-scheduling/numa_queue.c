@@ -1,6 +1,6 @@
 #include "numa_queue.h"
 
-extern inline void numa_enqueue(Globals* context, Object arg, int pid) {
+extern void numa_enqueue(Globals* context, Object arg, int pid) {
 #ifdef MSQUEUE
     cluster_scheduler_start_op(&context->atomic_scheduler, &context->queue.Tail);
 #else
@@ -12,10 +12,9 @@ extern inline void numa_enqueue(Globals* context, Object arg, int pid) {
 #else
     cluster_scheduler_end_op(&context->atomic_scheduler, &context->queue.Tail->tail);
 #endif
-    spin_work();
 }
 
-extern inline Object numa_dequeue(Globals* context, int pid){
+extern Object numa_dequeue(Globals* context, int pid){
     Object obj;
 
 #ifdef MSQUEUE
@@ -23,18 +22,21 @@ extern inline Object numa_dequeue(Globals* context, int pid){
 #else
     cluster_scheduler_start_op(&context->atomic_scheduler, &context->queue.Head->head);
 #endif
-    obj = dequeue(&context->queue, pid);
+    obj = (Object)(dequeue(&context->queue, pid));
 #ifdef MSQUEUE
     cluster_scheduler_end_op(&context->atomic_scheduler, &context->queue.Tail);
 #else
     cluster_scheduler_end_op(&context->atomic_scheduler, &context->queue.Tail->tail);
 #endif
-    spin_work();
+    // JVM expects NULL when queue is empty
+    if (-1 == obj) {
+        return NULL;
+    }
 
     return obj;
 }
 
-extern inline Globals* create_global_context() {
+extern Globals* create_global_context() {
     Globals* context = (Globals*)malloc(sizeof(Globals));
     SHARED_OBJECT_INIT(&context->queue);
 #ifdef MSQUEUE

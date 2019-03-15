@@ -1,11 +1,24 @@
 #ifndef MSQUEUE_H_
 #define MSQUEUE_H_
 
-#include "config.h"
-#include "primitives.h"
-#include "backoff.h"
+#include "constants.h"
 
 #define POOL_SIZE                  1024
+
+
+typedef struct BackoffStruct {
+    unsigned backoff;
+    unsigned backoff_base_bits;
+    unsigned backoff_cap_bits;
+    unsigned backoff_shift_bits;
+    unsigned backoff_base;
+    unsigned backoff_cap;
+    unsigned backoff_addend;
+    unsigned help;
+    unsigned counter;
+    unsigned rnd;
+    unsigned prev_avg;
+} BackoffStruct;
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 extern __thread BackoffStruct backoff;

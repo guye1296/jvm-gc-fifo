@@ -320,7 +320,7 @@ env.sh: $(BUILDTREE_MAKE)
 	$(BUILDTREE_COMMENT); \
 	[ -n "$$JAVA_HOME" ] && { echo ": \$${JAVA_HOME:=$${JAVA_HOME}}"; }; \
 	{ \
-	echo "LD_LIBRARY_PATH=.:$${LD_LIBRARY_PATH:+$$LD_LIBRARY_PATH:}\$${JAVA_HOME}/jre/lib/${LIBARCH}/native_threads:\$${JAVA_HOME}/jre/lib/${LIBARCH}:${GCC_LIB}:/a/home/cc/students/cs/guyezer/shared_folder/guy/project/jvm-gc-fifo/msqueue-scheduling"; \
+	echo "LD_LIBRARY_PATH=.:$${LD_LIBRARY_PATH:+$$LD_LIBRARY_PATH:}\$${JAVA_HOME}/jre/lib/${LIBARCH}/native_threads:\$${JAVA_HOME}/jre/lib/${LIBARCH}:${GCC_LIB}:/specific/disk1/home/mad/Galois-PQ/inputs/students/guy/project/jvm-gc-fifo/msqueue-scheduling"; \
 	echo "CLASSPATH=$${CLASSPATH:+$$CLASSPATH:}.:\$${JAVA_HOME}/jre/lib/rt.jar:\$${JAVA_HOME}/jre/lib/i18n.jar"; \
 	} | sed s:$${JAVA_HOME:--------}:\$${JAVA_HOME}:g; \
 	echo "HOTSPOT_BUILD_USER=\"$${LOGNAME:-$$USER} in `basename $(GAMMADIR)`\""; \

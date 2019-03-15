@@ -8,11 +8,13 @@
 #include <string.h>
 #include <stdint.h>
 
-#include "config.h"
-#include "primitives.h"
-#include "rand.h"
-#include "thread.h"
+#include "constants.h"
 #include "cluster_scheduler.h"
+#ifdef MSQUEUE
+#include "msqueue.h"
+#else
+#include "hlcrq.h"
+#endif
 
 
 typedef struct _Globals {

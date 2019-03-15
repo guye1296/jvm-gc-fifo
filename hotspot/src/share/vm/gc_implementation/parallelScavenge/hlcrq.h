@@ -1,21 +1,13 @@
-#include "config.h"
-#include "primitives.h"
+#include "constants.h"
 
-#if 0
-// Definition: RING_POW
-// --------------------
-// The LCRQ's ring size will be 2^{RING_POW}.
+
+
 #ifndef RING_POW
 #define RING_POW        (17)
 #endif
 #define RING_SIZE       (1ull << RING_POW)
 
-// Definition: RING_STATS
-// --------------------
-// Define to collect statistics about CRQ closes and nodes
-// marked unsafe.
-//#define RING_STATS
-#endif
+#define RING_STATS
 
 // Definition: HAVE_HPTRS
 // --------------------

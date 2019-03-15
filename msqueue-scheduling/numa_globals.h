@@ -14,6 +14,12 @@
 #include "thread.h"
 #include "cluster_scheduler.h"
 
+#ifdef MSQUEUE
+#include "msqueue.h"
+#else
+#include "hlcrq.h"
+#endif
+
 
 typedef struct _Globals {
     volatile char pad0[CACHE_LINE_ALIGNED_SIZE] __attribute__ ((aligned (CACHE_LINE_ALIGNED_SIZE)));

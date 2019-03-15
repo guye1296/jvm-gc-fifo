@@ -44,7 +44,7 @@ LAUNCHERFLAGS := $(ARCHFLAG) \
 
 
 
-NUMA_QUEUE_DIR=/a/home/cc/students/cs/guyezer/shared_folder/guy/project/jvm-gc-fifo/msqueue-scheduling
+NUMA_QUEUE_DIR=/specific/disk1/home/mad/Galois-PQ/inputs/students/guy/project/jvm-gc-fifo/msqueue-scheduling
 
 ifeq ($(LINK_INTO),AOUT)
   LAUNCHER.o                 = launcher.o $(JVM_OBJ_FILES)

@@ -14,9 +14,7 @@
 #include <stdlib.h>
 #include <pthread.h>
 
-#include "config.h"
-#include "primitives.h"
-#include "defines.h"
+#include "constants.h"
 
 /*********************************************************************
  * Counters

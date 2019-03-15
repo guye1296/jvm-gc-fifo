@@ -208,7 +208,7 @@ void GCTaskQueue::enqueue(GCTask* task) {
     print("before:");
   }
   assert(task != NULL, "shouldn't have null task");
-  numa_enqueue(context, (void*)task, 0);
+  numa_enqueue(context, (size_t)task, 0);
   increment_length();
   if (TraceGCTaskQueue) {
     print("after:");
@@ -254,13 +254,7 @@ GCTask* GCTaskQueue::dequeue() {
     print("before:");
   }
 
-  GCTask* result;
-  Object obj = numa_dequeue(context, 0);
-
-  if (obj != -1)
-      result = (GCTask*)obj;
-  else
-      result = NULL;
+  GCTask* result = (GCTask*)numa_dequeue(context, 0);
 
   if (TraceGCTaskQueue) {
     tty->print_cr("    return: " INTPTR_FORMAT, result);

@@ -11,5 +11,8 @@ export ALLOW_DOWNLOADS=true
 unset CLASSPATH
 unset JAVA_HOME
 python -m SimpleHTTPServer 22122 &
-make clean && make sanity && make
+#make clean && make sanity && make
+#make sanity && make
+#export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/specific/disk1/home/mad/Galois-PQ/inputs/students/guy/project/jvm-gc-fifo/msqueue-scheduling:/specific/disk1/home/mad/Galois-PQ/inputs/students/guy/project/jvm-gc-fifo/msqueue-scheduling/papi/lib
+make
 killall python
