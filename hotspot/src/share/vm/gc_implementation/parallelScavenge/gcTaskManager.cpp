@@ -29,6 +29,7 @@
 #include "memory/allocation.inline.hpp"
 #include "runtime/mutex.hpp"
 #include "runtime/mutexLocker.hpp"
+#include <stdio.h>
 
 #ifdef REPLACE_MUTEX
 #include <sys/syscall.h>
@@ -265,6 +266,7 @@ GCTask* GCTaskQueue::dequeue() {
 
 // Dequeue one task, preferring one with affinity.
 GCTask* GCTaskQueue::dequeue(uint affinity) {
+  printf("guy: entring affinity dequeue\n");
   if (TraceGCTaskQueue) {
     tty->print_cr("[" INTPTR_FORMAT "]"
                   " GCTaskQueue::dequeue(%u)", this, affinity);

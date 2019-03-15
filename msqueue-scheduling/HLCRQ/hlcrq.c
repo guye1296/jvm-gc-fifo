@@ -362,7 +362,9 @@ Object dequeue(hlcrq_t* p_hlcrq, int pid) {
             // try to return empty
             next = rq->next;
             if (next == null)
-                return -1;  // EMPTY
+                return NULL;  // EMPTY
+            else
+                printf("NOT NULL OMG\n");
             if (tail_index(rq->tail) <= h + 1) {
                 CASPTR(&p_hlcrq->Head, rq, next);
                 fprintf(stderr, "CASPTR(&head, rq, next)!!!!!!!!!!!!!!!!!!!!!!!!!!!");

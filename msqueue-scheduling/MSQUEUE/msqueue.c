@@ -116,7 +116,7 @@ Object dequeue(queue_t* p_msqueu, int pid) {
 					thread_cas_counters.tail_cas_failures++;
 				}
 			} else
-				return -1; // Queue is empty, couldn't dequeue
+				return NULL; // Queue is empty, couldn't dequeue
 			backoff_delay(&backoff);
 		} else {
 			// No need to deal with Tail
