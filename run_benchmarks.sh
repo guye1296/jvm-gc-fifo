@@ -39,9 +39,10 @@ for QUEUE in "${QUEUES[@]}"; do
 	    # compile libnuma_queue
             pushd . > /dev/null
             cd $QUEUES_DIR/
-            echo make $QUEUE use_cpus=$CORES scheduling_method_num=$SCHEDULING_METHOD_NUM
+            make $QUEUE use_cpus=$CORES scheduling_method_num=$SCHEDULING_METHOD_NUM
             popd > /dev/null
 
+            # run benchmark
             pushd . > /dev/null
             cd $SPEC_DIR
             LOG_DIR=$QUEUE/$METHOD
@@ -50,6 +51,18 @@ for QUEUE in "${QUEUES[@]}"; do
             LOG_FILE=$LOG_DIR/$CORES.log
             $MY_JAVA -Xbootclasspath/p:lib/javac.jar  -XX:+UseParallelOldGC -XX:ParallelGCThreads=$THREAD -Xmx1g -Xms1g -XX:+UseNUMA  -jar SPECjvm2008.jar \
                 -ikv --lagom -i 2 -ops 40 -bt 48 xml.transform > $LOG_FILE
+
+            # generate csv report
+            for BENCHMARK_LOG_FILE in *.log; do
+                THROUGHPUT=$(awk '/(Young work .*)|(Total GC .*)/ { print $4 }' $LOG_FILE | xargs echo | awk '{ print int($1/$2) }')
+                FILENAME=$BENCHMARK_LOG_FILE
+                FILENAME="${filename%.*}"
+                echo $FILENAME,$THROUGHPUT >> throughput_tmp.csv
+            done
+            
+            cat throughput_tmp.csv | sort -n > throughput.csv
+            rm throughput_tmp.csv
+
             popd > /dev/null
 
         done
