@@ -18,11 +18,7 @@ extern Object numa_dequeue(Globals* context, int pid){
 #else
     cluster_scheduler_end_op(&context->atomic_scheduler, &context->queue.Tail->tail);
 #endif
-    // JVM expects NULL when queue is empty
-    if (-1 == obj) {
-        return NULL;
-    }
-
+    
     return obj;
 }
 
