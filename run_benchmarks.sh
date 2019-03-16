@@ -49,7 +49,7 @@ for QUEUE in "${QUEUES[@]}"; do
             echo $LOG_DIR
             mkdir -p $LOG_DIR
             LOG_FILE=$LOG_DIR/$CORES.log
-            $MY_JAVA -Xbootclasspath/p:lib/javac.jar  -XX:+UseParallelOldGC -XX:ParallelGCThreads=$THREAD -Xmx1g -Xms1g -XX:+UseNUMA  -jar SPECjvm2008.jar \
+            $MY_JAVA -Xbootclasspath/p:lib/javac.jar  -XX:+UseParallelOldGC -XX:ParallelGCThreads=$CORES -Xmx1g -Xms1g -XX:+UseNUMA  -jar SPECjvm2008.jar \
                 -ikv --lagom -i 2 -ops 40 -bt 48 xml.transform > $LOG_FILE
 
             # generate csv report
