@@ -224,6 +224,8 @@ public:
   //     Dequeue one task, preferring one with affinity.
   GCTask* dequeue(uint affinity);
 protected:
+  void orig_enqueue(GCTask* task);
+  GCTask* orig_dequeue();
   // Constructor. Clients use factory, but there might be subclasses.
   GCTaskQueue(bool on_c_heap);
   // Destructor-like method.

@@ -137,7 +137,6 @@ GCTaskQueue* GCTaskQueue::create() {
     tty->print_cr("GCTaskQueue::create()"
                   " returns " INTPTR_FORMAT, result);
   }
-  printf("GCTaskQueue::create() ==> (%zu)\n", (size_t)result);
   return result;
 }
 
@@ -148,7 +147,6 @@ GCTaskQueue* GCTaskQueue::create_on_c_heap() {
                   " returns " INTPTR_FORMAT,
                   result);
   }
-  printf("GCTaskQueue::create_on_c_heap() ==> (%zu)\n", (size_t)result);
   return result;
 }
 
@@ -176,7 +174,6 @@ GCTaskQueue::~GCTaskQueue() {
 #endif
 
 void GCTaskQueue::destruct() {
-    printf("GCTaskQueue::destruct free memory\n");
     free(context);
 }
 
@@ -200,16 +197,21 @@ void GCTaskQueue::destroy(GCTaskQueue* that) {
 }
 
 void GCTaskQueue::initialize() {
-  printf("GCTaskQueue::initialize\n");
-  if (context == NULL) {
-    printf("GCTaskQueue::initialize create new memory\n");
-    context = create_global_context();
-  }
-  set_length(0);
+    if (!_is_c_heap_obj) {
+        set_insert_end(NULL);
+        set_remove_end(NULL);
+        set_length(0);
+    }
+    else {
+        if (context == NULL) {
+            context = create_global_context();
+        }
+        set_length(0);
+    }
 }
 
 // Enqueue one task.
-void GCTaskQueue::enqueue(GCTask* task) {
+void GCTaskQueue::orig_enqueue(GCTask* task) {
   if (TraceGCTaskQueue) {
     tty->print_cr("[" INTPTR_FORMAT "]"
                   " GCTaskQueue::enqueue(task: "
@@ -218,11 +220,44 @@ void GCTaskQueue::enqueue(GCTask* task) {
     print("before:");
   }
   assert(task != NULL, "shouldn't have null task");
-  numa_enqueue(context, (uint64_t)task, 0);
+  assert(task->newer() == NULL, "shouldn't be on queue");
+  task->set_newer(NULL);
+#ifndef REPLACE_MUTEX
+  assert(task->older() == NULL, "shouldn't be on queue");
+  task->set_older(insert_end());
+#endif
+  if (is_empty()) {
+    set_remove_end(task);
+  } else {
+    insert_end()->set_newer(task);
+  }
+  set_insert_end(task);
   increment_length();
   if (TraceGCTaskQueue) {
     print("after:");
   }
+}
+
+// Enqueue one task.
+void GCTaskQueue::enqueue(GCTask* task) {
+    if (!_is_c_heap_obj) {
+        orig_enqueue(task);
+    }
+    else {
+        if (TraceGCTaskQueue) {
+            tty->print_cr("[" INTPTR_FORMAT "]"
+                    " GCTaskQueue::enqueue(task: "
+                    INTPTR_FORMAT ")",
+                    this, task);
+            print("before:");
+        }
+        assert(task != NULL, "shouldn't have null task");
+        numa_enqueue(context, (uint64_t)task, 0);
+        increment_length();
+        if (TraceGCTaskQueue) {
+            print("after:");
+        }
+    }
 }
 
 // Enqueue a whole list of tasks.  Empties the argument list.
@@ -239,12 +274,13 @@ void GCTaskQueue::enqueue(GCTaskQueue* list) {
     // Enqueuing the empty list: nothing to do.
     return;
   }
-  uint list_length = list->length();
 
-  GCTask* task = list->dequeue();
-  while (task != NULL) {
-      enqueue(task);
+  uint list_length = list->length();
+  GCTask* task;
+
+  for (uint i = 0; i < list_length; ++i) {
       task = list->dequeue();
+      enqueue(task);
   }
 
   set_length(length() + list_length);
@@ -257,18 +293,19 @@ void GCTaskQueue::enqueue(GCTaskQueue* list) {
 }
 
 // Dequeue one task.
-GCTask* GCTaskQueue::dequeue() {
+GCTask* GCTaskQueue::orig_dequeue() {
   if (TraceGCTaskQueue) {
     tty->print_cr("[" INTPTR_FORMAT "]"
                   " GCTaskQueue::dequeue()", this);
     print("before:");
   }
-
-  GCTask* result = (GCTask*)numa_dequeue(context, 0);
-  if (result != NULL) {
-    decrement_length();
-  }
-
+#ifndef REPLACE_MUTEX
+  assert(!is_empty(), "shouldn't dequeue from empty list");
+  GCTask* result = remove();
+  assert(result != NULL, "shouldn't have NULL task");
+#else
+  GCTask* result = remove();
+#endif
   if (TraceGCTaskQueue) {
     tty->print_cr("    return: " INTPTR_FORMAT, result);
     print("after:");
@@ -276,9 +313,33 @@ GCTask* GCTaskQueue::dequeue() {
   return result;
 }
 
+// Dequeue one task.
+GCTask* GCTaskQueue::dequeue() {
+    if (!_is_c_heap_obj) {
+        return orig_dequeue();
+    }
+    else {
+        if (TraceGCTaskQueue) {
+            tty->print_cr("[" INTPTR_FORMAT "]"
+                    " GCTaskQueue::dequeue()", this);
+            print("before:");
+        }
+
+        GCTask* result = (GCTask*)numa_dequeue(context, 0);
+        if (result != NULL) {
+            decrement_length();
+        }
+
+        if (TraceGCTaskQueue) {
+            tty->print_cr("    return: " INTPTR_FORMAT, result);
+            print("after:");
+        }
+        return result;
+    }
+}
+
 // Dequeue one task, preferring one with affinity.
 GCTask* GCTaskQueue::dequeue(uint affinity) {
-  printf("guy: entring affinity dequeue\n");
   if (TraceGCTaskQueue) {
     tty->print_cr("[" INTPTR_FORMAT "]"
                   " GCTaskQueue::dequeue(%u)", this, affinity);
@@ -449,11 +510,8 @@ void GCTaskManager::initialize() {
   _queue = SynchronizedGCTaskQueue::create(unsynchronized_queue, lock());
   _noop_task = NoopGCTask::create_on_c_heap();
   reset_noop_tasks();
-  printf("unsynchronized_queue(%zu)\n", (size_t)unsynchronized_queue);
-  printf("_queue(%zu)\n", (size_t)_queue);
 #else
   _queue = GCTaskQueue::create_on_c_heap();
-  printf("_queue(%zu)\n", (size_t)_queue);
 #ifdef NUMA_AWARE_TASKQ
   if (UseGCTaskAffinity && UseNUMA) {
     uint n = os::numa_get_groups_num();
@@ -462,10 +520,8 @@ void GCTaskManager::initialize() {
       _numa_queues->append(GCTaskQueue::create_on_c_heap());
 
     for (uint i=0; i < n; i++)
-      printf("_numa_queues[%u](%zu)\n", i, (size_t)_numa_queues[i]);
   } else
     _numa_queues = NULL;
-    printf("_numa_queues is NULL\n");
 #endif
 #ifdef INTER_NODE_MSG_Q
   if (UseNUMA) {
@@ -632,7 +688,6 @@ void GCTaskManager::add_task(GCTask* task) {
                   task, GCTask::Kind::to_string(task->kind()));
   }
   queue()->enqueue(task);
-  //printf("GCTaskManager(%zu)::add_task queue=%zu, task=%zu\n", (size_t)this, (size_t)queue(), (size_t)task);
 #ifndef REPLACE_MUTEX
   // Notify with the lock held to avoid missed notifies.
   if (TraceGCTaskManager) {
@@ -683,7 +738,6 @@ void GCTaskManager::add_list(GCTaskQueue* list) {
       _numa_queues->at(i)->enqueue(numa_q + i);
     }
     queue()->enqueue(&q);
-    printf("GCTaskManager::add_list call initialize");
     list->initialize();
   } else
 #endif
@@ -740,7 +794,6 @@ tryagain:
   } else
 #endif
   result = queue()->dequeue();
-  //printf("GCTaskManager(%zu)::get_task queue=%zu, task=%zu\n", (size_t)this, (size_t)queue(), (size_t)result);
   if (result) {
     if (result->is_barrier_task()) {
       assert(which != sentinel_worker(),

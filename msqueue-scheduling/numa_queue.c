@@ -13,7 +13,7 @@ extern void numa_enqueue(Globals* context, Object arg, int pid) {
     cluster_scheduler_end_op(&context->atomic_scheduler, &context->queue.Tail->tail);
 #endif
 
-    spin_work();
+    //spin_work();
 }
 
 extern Object numa_dequeue(Globals* context, int pid){
@@ -31,7 +31,7 @@ extern Object numa_dequeue(Globals* context, int pid){
     cluster_scheduler_end_op(&context->atomic_scheduler, &context->queue.Head->head);
 #endif
 
-    spin_work();
+    //spin_work();
 
     return obj;
 }

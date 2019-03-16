@@ -6,9 +6,16 @@ THREADS=( 1 2 4 8 16 32 48 64 80 96 112 128 144 160 176)
 
 QUEUES_DIR=`pwd`/msqueue-scheduling
 
+export MY_JAVA=`pwd`/build/linux-amd64/bin/java
+SPEC_DIR=/a/home/cc/students/cs/guyezer/shared_folder/guy/SPECjvm2008
+
 # set LD_PRELOAD
+export LD_PRELOAD="$QUEUES_DIR/libnuma_queue.so $QUEUES_DIR/papi/lib/libpapi.so $QUEUES_DIR/msqueue-scheduling/libjemalloc.so"
+
 
 for QUEUE in "${QUEUES[@]}"; do
+    # TODO: recompile JAVA to support the given queue
+
     for METHOD in "${NUMA_METHODS[@]}"; do
         for CORES in "${THREADS[@]}"; do
 
@@ -30,17 +37,34 @@ for QUEUE in "${QUEUES[@]}"; do
 	    esac
 			
 	    # compile libnuma_queue
-            pushd .
+            pushd . > /dev/null
             cd $QUEUES_DIR/
             make $QUEUE use_cpus=$CORES scheduling_method_num=$SCHEDULING_METHOD_NUM
-            popd
+            popd > /dev/null
 
+            # run benchmark
+            pushd . > /dev/null
+            cd $SPEC_DIR
+            LOG_DIR=$QUEUE/$METHOD
+            echo $LOG_DIR
+            mkdir -p $LOG_DIR
+            LOG_FILE=$LOG_DIR/$CORES.log
+            $MY_JAVA -Xbootclasspath/p:lib/javac.jar  -XX:+UseParallelOldGC -XX:ParallelGCThreads=$CORES -Xmx1g -Xms1g -XX:+UseNUMA  -jar SPECjvm2008.jar \
+                -ikv --lagom -i 2 -ops 40 -bt 48 xml.transform > $LOG_FILE
 
+            # generate csv report
+            for BENCHMARK_LOG_FILE in *.log; do
+                THROUGHPUT=$(awk '/(Young work .*)|(Total GC .*)/ { print $4 }' $LOG_FILE | xargs echo | awk '{ print int($1/$2) }')
+                FILENAME=$BENCHMARK_LOG_FILE
+                FILENAME="${filename%.*}"
+                echo $FILENAME,$THROUGHPUT >> throughput_tmp.csv
+            done
+            
+            cat throughput_tmp.csv | sort -n > throughput.csv
+            rm throughput_tmp.csv
+
+            popd > /dev/null
 
         done
     done
 done
-
-
-
-
