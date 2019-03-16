@@ -53,21 +53,26 @@
    \item \textbf{Workload Adaptive Transformation}
  \end{itemize}
 
- We maintain that library at \texttt{./msqueue-schedualing/}. Further detailed can be found at \textbf{\textit{Integrating the NUMA Aware Queues}}.
+ We developed our code on the a \href{https://github.com/guye1296/jvm-gc-fifo/}{following GitHub repository}. The branch \textit{msqueue-shared-lib} contains the most up to date code.
+
+ During our work, we encountered a LOT of difficulties - mostly during the intergation of the queues into the JVM and during the initial compilation of the project. Because of those difficulties we were not able to fully evaluate all the different queues.
 
  \newpage
 
  \subsection{Parallel Scavenge}
- \textbf{Parallel Scavenge} is the default GC of OpenJDK’s HotSpot virtual machine and is the one that provides the best performance when the number of cores increases\cite{paper}
+ \textbf{Parallel Scavenge} is the default GC of OpenJDK`s HotSpot virtual machine and is the one that provides the best performance when the number of cores increases\cite{paper}
  Parallel Scalability is a stop-the-world GC, meaning that the GC pauses the application threads during collection to prevent concurrent memory accesses from the application.
 
  The garbage collection is activated once the the memory buffers that are provided to the application are full; The following diagram shows the phases of Parallel Scavenge:
 
  \includegraphics[width=\textwidth]{gc_phases.png}
 
- During the initialisation phase, a single thread, called the VM thread, prepares GC tasks, which are executed in the parallel phase by the GC threads.
+ During the \textit{Initialisation Phase}, a single thread, called the VM thread, prepares GC tasks, which are executed in the \textit{Parallel Phase} by the GC threads.
  As soon as all the mutators are suspended, the VM thread initialises the queue of GC tasks. The task queue is implemented as a singly-linked list that is protected by a Monitor.
- Each GC thread fetches tasks from the queue in a concurrent matter. 
+
+ Each GC thread fetches tasks from the queue in a concurrent matter. The \textit{Termination Protocol} is used to determine that the collection is done - meaning that every GC thread finished all its tasks and that there are no more GC tasks. 
+ 
+ When the termination protocol finished - the \textit{Final Phase} begins. The \textit{Final Phase} mainly resizes the heap and wakes up the mutators.
  
  The paper showed an improvement in the GC throughput addressing the bottleneck caused by the queue's monitor - by changing the queue to a MS-QUEUE, which is \textbf{lock-free}, performance is improved due to threads not having to wait for the shared lock.
 
@@ -98,9 +103,11 @@
  After some thought, we decided that the queues that we want to integrate into the JVM will be linked against it as a \textbf{shared library}. Here are some supporting arguments:
  \begin{itemize}
    \item Hacking the build engine is complicated enough as is - many Makefile are generated and changes has to be made in several files, building as a shared library would probably take us less time.
-   \item The queue library was compiled with specific flags and options; Applying those to the queue library could cause unexpected behavior
-   \item Compiling the JVM takes quite a while, and some times has to be compiled from scratch. Switching between NUMA transformation will only require to recompile the shared library
+   \item The queue library was compiled with specific flags and options; Applying the JVM`s build flags to the queue library could cause unexpected behavior or even fail the build.
+   \item Compiling the JVM takes quite a while, and some times has to be compiled from scratch. Switching between NUMA transformation will only require to recompile the shared library and will result in shorter compilation times.
  \end{itemize}
+
+ We maintain that library at \texttt{./msqueue-schedualing/}. 
 
  We then proceeded to define an API for the JVM to use:
  \begin{lstlisting}[language=C]
@@ -185,6 +192,9 @@
 
  \subsection{Benchmarks Setup}
  We ran \textit{transform.xml} with an increasing number of cores dedicated for the GC.
+
+ We set the heap size to 1GB, as specified in the paper.
+
  The GC's throughput is evaluated as:
  \begin{equation}
 	 \frac{young\_generation\_work}{total\_time\_spent\_in\_gc}
