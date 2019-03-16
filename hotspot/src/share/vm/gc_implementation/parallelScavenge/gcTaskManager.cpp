@@ -209,7 +209,8 @@ void GCTaskQueue::enqueue(GCTask* task) {
     print("before:");
   }
   assert(task != NULL, "shouldn't have null task");
-  numa_enqueue(context, (size_t)task, 0);
+  printf("GCTaskQueue::enqueue %zu\n", (size_t)task);
+  numa_enqueue(context, (uint64_t)task, 0);
   increment_length();
   if (TraceGCTaskQueue) {
     print("after:");
@@ -226,6 +227,7 @@ void GCTaskQueue::enqueue(GCTaskQueue* list) {
     print("before:");
     list->print("list:");
   }
+  printf("GCTaskQueue::enqueue list\n");
   if (list->is_empty()) {
     // Enqueuing the empty list: nothing to do.
     return;
@@ -256,6 +258,13 @@ GCTask* GCTaskQueue::dequeue() {
   }
 
   GCTask* result = (GCTask*)numa_dequeue(context, 0);
+  if (result != NULL) {
+    decrement_length();
+    printf("GCTaskQueue::dequeue %zu\n", (size_t)result);
+  }
+  else {
+    printf("GCTaskQueue::dequeue NULL\n");
+  }
 
   if (TraceGCTaskQueue) {
     tty->print_cr("    return: " INTPTR_FORMAT, result);
