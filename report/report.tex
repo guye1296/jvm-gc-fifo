@@ -163,7 +163,7 @@
    \item \texttt{./hotspot/make/linux/build.sh} - Contains the top-level \textit{LD\_LIBRARY\_PATH}.
 
      \includegraphics[width=\textwidth]{build.png}
-   \item \texttt{./hotspot/make/linux/makefiles/buildtree.make} - Generator of different targets required. Generated the Makefile for the Parallel Scavenge implementation.
+   \item \texttt{./hotspot/make/linux/makefiles/buildtree.make} - Generator of Makefiles for different targets. Generated the Makefile for the Parallel Scavenge implementation.
 
      \includegraphics[width=\textwidth]{buildtree.png}
    \item \texttt{./hotspot/make/linux/makefiles/launcher.make} - Makefile for the gamma launcher, which is a required test that is run during the build (if we understood it correctly).
@@ -180,10 +180,45 @@
  \begin{itemize}
    \item \textbf{SPECjbb2005} isnt freely available
    \item \textbf{DaCapo} was very unstable. We tried hacking it quite a bit but with not too much success.
-   \item \textbf{SPECjvm2008} we chose \textit{transform.xml}
+   \item \textbf{SPECjvm2008} - which several of its benchmarks were used in the paper. We only used \textit{transform.xml}.
  \end{itemize}
+
  \subsection{Benchmarks Setup}
+ We ran \textit{transform.xml} with an increasing number of cores dedicated for the GC.
+ The GC's throughput is evaluated as:
+ \begin{equation}
+	 \frac{young\_generation\_work}{total\_time\_spent\_in\_gc}
+ \end{equation}
+
+ \begin{itemize}
+   \item \textit{young generation work} is the total bytes that were transferred in the young generation
+   \item \textit{total time spent in gc} is the total execution time in the GC
+ \end{itemize}
+
+ Luckily for us, the initial author had already printed these values (and more) in the JVM exit point:
+
+ \includegraphics[width=\textwidth]{gc-debug-prints.png}
+
+ The script \texttt{run\_benchmarks.sh} runs the benchmarks with different configurations - it iterates on all the different queues (msqueue and hlcrq), numa schedualing methods and an increasing number of cores. It saves the result to log files which are later on parsed by it into a .csv file - in which its left colomn is the number of processes and its right column is the GC throuhput for the given core.
+This gave us the ability to quickly analyze results of different runs.
+
+ \newpage
+
  \subsection{transform.xml Results}
+ Our result were not good - there may have been noise or that we have ran out tests wrogly. Since we couldn't get much run time on the server (after fixing all of our bugs) we did not have time to inspect that.
+
+ \subsubsection{without changes}
+
+ \includegraphics[width=\textwidth]{graph-no-changes.png}
+
+ Here you can see that, generally, that as the number of cores go up, the throughput goes up - until it reaches its peak at 32 cores, and then the throughput goes down. This could be because of contention over a shared resource.
+ 
+
+ \subsubsection{MSQUEUE}
+
+ \subsubsection{HLCRQ}
+
+ \subsection{Conclusion}
 
   % references
   \medskip
