@@ -3,22 +3,85 @@
 \usepackage{graphicx}
 \usepackage{hyperref}
 \usepackage{listings}
+\usepackage{biblatex}
 
 
 \title{Evaluating Performance of Different FIFO Queues in the Java Virtual Machine's Garbage Collector}
 \date{2019-03-16}
 \author{Guy Ezer; Ran Hochstet}
 
+% images path
+\graphicspath { {./images/} }
 
 \begin{document}
   \maketitle
   \newpage
   \section{Intro}
+  \subsection{Abstract}
+  \paragraph
+  Large-scale multicore architectures create new challenges for garbage collectors. 
+  The paper \href{https://hal.inria.fr/hal-00868012/document}{“A study of the scalability of stop-the-world garbage collectors on multicores”} analyzed the HostSpot JVM’s garbage collector (GC) called \textbf{Parallel Scavenge}, identified its bottlenecks and tried to address them using parallel programming techniques - such as using a lock-free task queue - as we saw in class.
+
+  The paper modified the HotSpot JVM to support the proposed changes and compared both the non-modified JVM and the modified JVM on standard benchmarks and showed that the lock-free approach improved the GC throughput.
+
+  Further research can be done on the concurrent FIFO queue in the GC context - 
+  the concurrent FIFO queue is a fundamental data structure, and designing efficient concurrent queues has attracted a lot of research attention.
+  Today, the best performing queues still have contended hot spots (namely, the queue head and tail). These hot spots are particularly painful when queues are used on modern non-uniform memory access (NUMA) machines. These machines have multiple processors, each of which has multiple cores.
+  The overhead of contended hot spots on a NUMA machine is very high because of the latency of transferring a cache line between processors is orders of magnitudes higher than transferring a line between cores in the same processor.
+
+  In our work, focused on the parallel task queue and study the impact of using different concurrent queues as the GC scheduling queue on the GC itself and the application on NUMA systems.
+  \newpage
+  \subsection{Parallel Scavenge}
+  \textbf{Parallel Scavenge} is the default GC of OpenJDK’s HotSpot virtual machine and is the one that provides the best performance when the number of cores increases\cite{paper}
+  Parallel Scalability is a stop-the-world GC, meaning that the GC pauses the application threads during collection to prevent concurrent memory accesses from the application.
+
+  The garbage collection is activated once the the memory buffers that are provided to the application are full; The following diagram shows the phases of Parallel Scavenge:
+
+  \includegraphics[width=\textwidth]{gc_phases.png}
+
+  During the initialisation phase, a single thread, called the VM thread, prepares GC tasks, which are executed in the parallel phase by the GC threads.
+  As soon as all the mutators are suspended, the VM thread initialises the queue of GC tasks. The task queue is implemented as a singly-linked list that is protected by a Monitor.
+  Each GC thread fetches tasks from the queue in a concurrent matter. 
+  
+  The paper showed an improvement in the GC throughput addressing the bottleneck caused by the queue's monitor - by changing the queue to a MS-QUEUE, which is \textbf{lock-free}, performance is improved due to threads not having to wait for the shared lock.
+
+  \newpage
+
   \section{Integration}
+  We had \textit{a LOT} of problems during the compilation of the JVM
+
   \subsection{Initial Compilation}
+  The Initial compilation of the provided version of OpenJDK took several days; We provide a script called \textit{compile.sh} which compiles the whole project.
+  
+  Since the code is very outdated, a lot of patches had to be made in order for the JDK to be compiled - which includes:
+  \begin{itemize}
+    \item Changing timestaps of older files - the build engine terminates when it encounters file that are over 10 years "old"
+    \item Creating a local HTTP server to host resources that the build engine requires; the original server died:
+
+    \includegraphics[width=\textwidth]{local_http_server.png}
+    \item applying a few patches to libalsa (my distribution's libalsa was too new for the JDK to build on - the API was broken)
+  \end{itemize}
+
+  Luckily, we found the \href{http://www.voidcn.com/article/p-zayqisji-va.html}{following blog post} which covered the rest of the unresolved errors.
+
+  \includegraphics[width=\textwidth]{initial_build.png}
+
+  \newpage
+
   \subsection{Integrating the NUMA Aware Queues}
   \section{Benchmarks}
   \subsection{Chosen Benchmarks}
   \subsection{Benchmarks Setup}
   \subsection{transform.xml Results}
+
+  % references
+  \medskip
+  \newpage
+
+  \begin{thebibliography}{9}
+    \bibitem{paper}
+      Lokesh Gidra, Gael Thomas, Julien Sopena and Marc Shapiro: "A Study of the Scalability of Stop-the-world Garbage Collectors on Multicores"
+      \\\texttt{https://hal.inria.fr/hal-00868012/document}
+  \end{thebibliography}
+
 \end{document}
