@@ -52,19 +52,23 @@ for QUEUE in "${QUEUES[@]}"; do
             $MY_JAVA -Xbootclasspath/p:lib/javac.jar  -XX:+UseParallelOldGC -XX:ParallelGCThreads=$CORES -Xmx1g -Xms1g -XX:+UseNUMA  -jar SPECjvm2008.jar \
                 -ikv --lagom -i 2 -ops 40 -bt 48 xml.transform > $LOG_FILE
 
-            # generate csv report
-            for BENCHMARK_LOG_FILE in *.log; do
-                THROUGHPUT=$(awk '/(Young work .*)|(Total GC .*)/ { print $4 }' $LOG_FILE | xargs echo | awk '{ print int($1/$2) }')
-                FILENAME=$BENCHMARK_LOG_FILE
-                FILENAME="${filename%.*}"
-                echo $FILENAME,$THROUGHPUT >> throughput_tmp.csv
-            done
-            
-            cat throughput_tmp.csv | sort -n > throughput.csv
-            rm throughput_tmp.csv
-
             popd > /dev/null
 
         done
+
+        # generate csv report for all cores
+        cd $QUEUES_DIR/
+        pushd . > /dev/null
+        for BENCHMARK_LOG_FILE in *.log; do
+            THROUGHPUT=$(awk '/(Young work .*)|(Total GC .*)/ { print $4 }' $LOG_FILE | xargs echo | awk '{ print int($1/$2) }')
+            FILENAME=$BENCHMARK_LOG_FILE
+            FILENAME="${filename%.*}"
+            echo $FILENAME,$THROUGHPUT >> throughput_tmp.csv
+        done
+         
+        cat throughput_tmp.csv | sort -n > throughput.csv
+        rm throughput_tmp.csv
+
+        popd > /dev/null
     done
 done
