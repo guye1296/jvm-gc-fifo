@@ -4,7 +4,9 @@
 \usepackage{hyperref}
 \usepackage{listings}
 \usepackage{biblatex}
-
+\usepackage{lmodern}  % for bold teletype font
+\usepackage{amsmath}  % for \hookrightarrow
+\usepackage{xcolor}   % for \textcolor
 
 \title{Evaluating Performance of Different FIFO Queues in the Java Virtual Machine's Garbage Collector}
 \date{2019-03-16}
@@ -13,9 +15,21 @@
 % images path
 \graphicspath { {./images/} }
 
+% newline between paragraphs
+\usepackage[parfill]{parskip}
+\lstset{
+  basicstyle=\ttfamily,
+  columns=fullflexible,
+  frame=single,
+  breaklines=true,
+  postbreak=\mbox{\textcolor{red}{$\hookrightarrow$}\space},
+}
+
 \begin{document}
   \maketitle
+
   \newpage
+
   \section{Intro}
   \subsection{Abstract}
   \paragraph
@@ -30,7 +44,9 @@
   The overhead of contended hot spots on a NUMA machine is very high because of the latency of transferring a cache line between processors is orders of magnitudes higher than transferring a line between cores in the same processor.
 
   In our work, focused on the parallel task queue and study the impact of using different concurrent queues as the GC scheduling queue on the GC itself and the application on NUMA systems.
+
   \newpage
+
   \subsection{Parallel Scavenge}
   \textbf{Parallel Scavenge} is the default GC of OpenJDK’s HotSpot virtual machine and is the one that provides the best performance when the number of cores increases\cite{paper}
   Parallel Scalability is a stop-the-world GC, meaning that the GC pauses the application threads during collection to prevent concurrent memory accesses from the application.
@@ -69,8 +85,33 @@
   \newpage
 
   \subsection{Integrating the NUMA Aware Queues}
+  After some thought, we decided that the queues that we want to integrate into the JVM will be linked against it as a shared library. Here are some supporting arguments:
+  \begin{itemize}
+    \item Hacking the build engine is complicated enough as is - many Makefile are generated and changes has to be made in several files, building as a shared library would probably take us less time.
+    \item The queue library was compiled with specific flags and options; Applying those to the queue library could cause unexpected behavior
+    \item Compiling the JVM takes quite a while, and some times has to be compiled from scratch. Switching between NUMA transformation will only require to recompile the shared library
+  \end{itemize}
+
+  We then proceeded to define an API for the JVM to use:
+  \begin{lstlisting}[language=C]
+    extern void numa_enqueue(Globals* context, Object arg, int pid);
+
+    extern Object numa_dequeue(Globals* context, int pid);
+    
+    extern Globals* create_global_context();
+  \end{lstlisting}
+
+  \newpage
+
   \section{Benchmarks}
   \subsection{Chosen Benchmarks}
+  Initially, we wanted to run the same benchmarks that were introduced in the paper:
+
+  \begin{itemize}
+    \item \textbf{SPECjbb2005}
+    \item \textbf{SPECjvm2008}
+    \item \textbf{DaCapo}
+  \end{itemize}
   \subsection{Benchmarks Setup}
   \subsection{transform.xml Results}
 
