@@ -1,7 +1,19 @@
 #include "numa_queue.h"
 
 extern void numa_enqueue(Globals* context, Object arg, int pid) {
+#ifdef MSQUEUE
+    cluster_scheduler_start_op(&context->atomic_scheduler, &context->queue.Tail);
+#else
+    cluster_scheduler_start_op(&context->atomic_scheduler, &context->queue.Tail->tail);
+#endif
     enqueue(&context->queue, arg, pid);
+#ifdef MSQUEUE
+    cluster_scheduler_end_op(&context->atomic_scheduler, &context->queue.Tail);
+#else
+    cluster_scheduler_end_op(&context->atomic_scheduler, &context->queue.Tail->tail);
+#endif
+
+    spin_work();
 }
 
 extern Object numa_dequeue(Globals* context, int pid){
@@ -14,11 +26,13 @@ extern Object numa_dequeue(Globals* context, int pid){
 #endif
     obj = (Object)(dequeue(&context->queue, pid));
 #ifdef MSQUEUE
-    cluster_scheduler_end_op(&context->atomic_scheduler, &context->queue.Tail);
+    cluster_scheduler_end_op(&context->atomic_scheduler, &context->queue.Head);
 #else
-    cluster_scheduler_end_op(&context->atomic_scheduler, &context->queue.Tail->tail);
+    cluster_scheduler_end_op(&context->atomic_scheduler, &context->queue.Head->head);
 #endif
-    
+
+    spin_work();
+
     return obj;
 }
 

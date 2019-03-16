@@ -171,6 +171,8 @@ inline int close_q(RingQueue *rq, const uint64_t t, const int tries) {
 
 void enqueue(hlcrq_t* p_hlcrq, Object arg, int pid) {
 
+    printf("try to enqueue: %zu\n", arg);
+
     int try_close = 0;
 
     while (1) {
@@ -208,6 +210,7 @@ alloc:
             if (CASPTR(&rq->next, null, nrq)) {
                 CASPTR(&p_hlcrq->Tail, rq, nrq);
                 nrq = null;
+		//printf("successful solo enqueue: %zu\n", arg);
                 return;
             }
             continue;
@@ -252,6 +255,7 @@ alloc:
                 		 * Insure the two above checks we did (that no one pass us and used this cell)
                 		 */
                 		CAS2((uint64_t*)cell, -1, idx, arg, t)) {
+		    //printf("successful enqueue: %zu\n", arg);
                     return;
                 }
             }
@@ -329,8 +333,10 @@ Object dequeue(hlcrq_t* p_hlcrq, int pid) {
 				 * ZILPA: how can it happen that 'idx' != 'h'
 				 */
                 if (likely(idx == h)) {
-                    if (CAS2((uint64_t*)cell, val, cell_idx, -1, unsafe | h + RING_SIZE))
-                        return val;
+                    if (CAS2((uint64_t*)cell, val, cell_idx, -1, unsafe | h + RING_SIZE)) {
+			    printf("dequeue: %zu\n", val);
+			    return val;
+		    }
                 } else {
                     if (CAS2((uint64_t*)cell, val, cell_idx, val, set_unsafe(idx))) {
                         count_unsafe_node();
@@ -363,6 +369,8 @@ Object dequeue(hlcrq_t* p_hlcrq, int pid) {
             next = rq->next;
             if (next == null) 
                 return NULL;  // EMPTY
+	    else
+                printf("dequeue: NULL\n");
 
             if (tail_index(rq->tail) <= h + 1) {
                 CASPTR(&p_hlcrq->Head, rq, next);
