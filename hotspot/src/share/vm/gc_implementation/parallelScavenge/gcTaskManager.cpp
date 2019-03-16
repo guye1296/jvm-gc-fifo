@@ -200,16 +200,23 @@ void GCTaskQueue::destroy(GCTaskQueue* that) {
 }
 
 void GCTaskQueue::initialize() {
-  printf("GCTaskQueue::initialize\n");
-  if (context == NULL) {
-    printf("GCTaskQueue::initialize create new memory\n");
-    context = create_global_context();
-  }
-  set_length(0);
+    printf("GCTaskQueue::initialize\n");
+    if (!_is_c_heap_obj) {
+        set_insert_end(NULL);
+        set_remove_end(NULL);
+        set_length(0);
+    }
+    else {
+        if (context == NULL) {
+            printf("GCTaskQueue::initialize create new memory\n");
+            context = create_global_context();
+        }
+        set_length(0);
+    }
 }
 
 // Enqueue one task.
-void GCTaskQueue::enqueue(GCTask* task) {
+void GCTaskQueue::orig_enqueue(GCTask* task) {
   if (TraceGCTaskQueue) {
     tty->print_cr("[" INTPTR_FORMAT "]"
                   " GCTaskQueue::enqueue(task: "
@@ -218,11 +225,44 @@ void GCTaskQueue::enqueue(GCTask* task) {
     print("before:");
   }
   assert(task != NULL, "shouldn't have null task");
-  numa_enqueue(context, (uint64_t)task, 0);
+  assert(task->newer() == NULL, "shouldn't be on queue");
+  task->set_newer(NULL);
+#ifndef REPLACE_MUTEX
+  assert(task->older() == NULL, "shouldn't be on queue");
+  task->set_older(insert_end());
+#endif
+  if (is_empty()) {
+    set_remove_end(task);
+  } else {
+    insert_end()->set_newer(task);
+  }
+  set_insert_end(task);
   increment_length();
   if (TraceGCTaskQueue) {
     print("after:");
   }
+}
+
+// Enqueue one task.
+void GCTaskQueue::enqueue(GCTask* task) {
+    if (!_is_c_heap_obj) {
+        orig_enqueue(task);
+    }
+    else {
+        if (TraceGCTaskQueue) {
+            tty->print_cr("[" INTPTR_FORMAT "]"
+                    " GCTaskQueue::enqueue(task: "
+                    INTPTR_FORMAT ")",
+                    this, task);
+            print("before:");
+        }
+        assert(task != NULL, "shouldn't have null task");
+        numa_enqueue(context, (uint64_t)task, 0);
+        increment_length();
+        if (TraceGCTaskQueue) {
+            print("after:");
+        }
+    }
 }
 
 // Enqueue a whole list of tasks.  Empties the argument list.
@@ -239,12 +279,13 @@ void GCTaskQueue::enqueue(GCTaskQueue* list) {
     // Enqueuing the empty list: nothing to do.
     return;
   }
-  uint list_length = list->length();
 
-  GCTask* task = list->dequeue();
-  while (task != NULL) {
-      enqueue(task);
+  uint list_length = list->length();
+  GCTask* task;
+
+  for (uint i = 0; i < list_length; ++i) {
       task = list->dequeue();
+      enqueue(task);
   }
 
   set_length(length() + list_length);
@@ -257,23 +298,49 @@ void GCTaskQueue::enqueue(GCTaskQueue* list) {
 }
 
 // Dequeue one task.
-GCTask* GCTaskQueue::dequeue() {
+GCTask* GCTaskQueue::orig_dequeue() {
   if (TraceGCTaskQueue) {
     tty->print_cr("[" INTPTR_FORMAT "]"
                   " GCTaskQueue::dequeue()", this);
     print("before:");
   }
-
-  GCTask* result = (GCTask*)numa_dequeue(context, 0);
-  if (result != NULL) {
-    decrement_length();
-  }
-
+#ifndef REPLACE_MUTEX
+  assert(!is_empty(), "shouldn't dequeue from empty list");
+  GCTask* result = remove();
+  assert(result != NULL, "shouldn't have NULL task");
+#else
+  GCTask* result = remove();
+#endif
   if (TraceGCTaskQueue) {
     tty->print_cr("    return: " INTPTR_FORMAT, result);
     print("after:");
   }
   return result;
+}
+
+// Dequeue one task.
+GCTask* GCTaskQueue::dequeue() {
+    if (!_is_c_heap_obj) {
+        return orig_dequeue();
+    }
+    else {
+        if (TraceGCTaskQueue) {
+            tty->print_cr("[" INTPTR_FORMAT "]"
+                    " GCTaskQueue::dequeue()", this);
+            print("before:");
+        }
+
+        GCTask* result = (GCTask*)numa_dequeue(context, 0);
+        if (result != NULL) {
+            decrement_length();
+        }
+
+        if (TraceGCTaskQueue) {
+            tty->print_cr("    return: " INTPTR_FORMAT, result);
+            print("after:");
+        }
+        return result;
+    }
 }
 
 // Dequeue one task, preferring one with affinity.
