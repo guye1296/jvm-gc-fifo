@@ -53,6 +53,8 @@
    \item \textbf{Workload Adaptive Transformation}
  \end{itemize}
 
+ numa-transformations are heuristics for determining ownership over the synchronization variable - only the cores that are on the same ``cluster`` as the owner can access the variable.
+
  We developed our code on the a \href{https://github.com/guye1296/jvm-gc-fifo/}{following GitHub repository}. The branch \textit{msqueue-shared-lib} contains the most up to date code.
 
  During our work, we encountered a LOT of difficulties - mostly during the intergation of the queues into the JVM and during the initial compilation of the project. Because of those difficulties we were not able to fully evaluate all the different queues.
@@ -197,12 +199,12 @@
 
  The GC's throughput is evaluated as:
  \begin{equation}
-	 \frac{young\_generation\_work}{total\_time\_spent\_in\_gc}
+	 \frac{young\_generation\_work}{total\_time\_spent\_in\_\_young\_gc}
  \end{equation}
 
  \begin{itemize}
    \item \textit{young generation work} is the total bytes that were transferred in the young generation
-   \item \textit{total time spent in gc} is the total execution time in the GC
+   \item \textit{total time spent in young gc} is the total execution time in young the GC generation
  \end{itemize}
 
  Luckily for us, the initial author had already printed these values (and more) in the JVM exit point:
