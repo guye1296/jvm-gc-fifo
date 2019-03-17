@@ -335,6 +335,13 @@ GCTask* GCTaskQueue::dequeue() {
  \begin{itemize}
    \item \textbf{SPECjbb2005} isnt freely available
    \item \textbf{DaCapo} was very unstable. We tried hacking it quite a bit but with not too much success.
+       We tried to ran tradesoap and eclipse and sometimes the run succeeded, and somtimes we ran into runtime errors:
+
+ \includegraphics[width=\textwidth]{dacapo_error.png}
+
+         This errors occurred even when we used the java version that was installed on the server.
+         After some research we found a post that suggest to avoid using parallelism options of the GC (the UseParallelOldGC option of the JVM). When we didn't use this option there were no runtime errors anymore.
+         Thus, we decided to drop off this benchmark.
    \item \textbf{SPECjvm2008} - which several of its benchmarks were used in the paper. We only used \textit{transform.xml}.
  \end{itemize}
 
