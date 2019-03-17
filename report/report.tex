@@ -182,6 +182,152 @@
 
  \newpage
 
+ \subsection{Replacing GC task queue with NUMA Aware Queues}
+ The HotSpot JVM is a huge project with a lot of files and it was really hard to find the exact location of the GC task queue.
+ In order to find the GC task queue and replace it with the NUMA Aware Queues we looked over the change log of the scalability study\cite{paper} to find the exact location of the queue.
+
+ We found that the GC task queue is implemented in \textit{GCTaskQueue} located in \texttt{./hotspot/src/share/vm/gc\_implementation/parallelScavenge/gcTaskManager.hpp}.
+
+ The methods we had to change were:
+ \begin{lstlisting}[language=C]
+  void initialize();
+  virtual void destruct();
+  void enqueue(GCTask* task);
+  void enqueue(GCTaskQueue* list);
+  GCTask* dequeue();
+ \end{lstlisting}
+
+ After we changed these methods and tested the JVM we noticed that the GC stuck after some minutes.
+ We tried to understand why it's happening and we noticed that this happens when the GC-Manager call the \lstinline{enqueue(GCTaskQueue* list)}, and the list is not created on the heap. Thus we understood that we need to use the original queue in this case.
+ Therefore we added two more methods:
+
+ \begin{lstlisting}[language=C]
+  void orig_enqueue(GCTask* task);
+  GCTask* orig_dequeue();
+ \end{lstlisting}
+
+ The above methods are the methods of the original queue.
+
+ Now we'll review the changes we inserted to the \textit{GCTaskQueue}:
+
+ \begin{lstlisting}[language=C]
+void GCTaskQueue::initialize() {
+    if (!_is_c_heap_obj) {
+        set_insert_end(NULL);
+        set_remove_end(NULL);
+        set_length(0);
+    }
+    else {
+        if (context == NULL) {
+            context = create_global_context();
+        }
+        set_length(0);
+    }
+}
+ \end{lstlisting}
+
+ In the \lstinline{initialize()} method we allocate memory for the NUMA-aware queue and initialize it. if the queue was allocated on the heap we use the original initialize steps.
+
+ \begin{lstlisting}[language=C]
+void GCTaskQueue::destruct() {
+    free(context);
+}
+ \end{lstlisting}
+
+ In the \lstinline{destruct()} method we free the memory we allocated for the NUMA-aware queue.
+
+ \begin{lstlisting}[language=C]
+void GCTaskQueue::enqueue(GCTask* task) {
+    if (!_is_c_heap_obj) {
+        orig_enqueue(task);
+    }
+    else {
+        if (TraceGCTaskQueue) {
+            tty->print_cr("[" INTPTR_FORMAT "]"
+                    " GCTaskQueue::enqueue(task: "
+                    INTPTR_FORMAT ")",
+                    this, task);
+            print("before:");
+        }
+        assert(task != NULL, "shouldn't have null task");
+        numa_enqueue(context, (uint64_t)task, 0);
+        increment_length();
+        if (TraceGCTaskQueue) {
+            print("after:");
+        }
+    }
+}
+ \end{lstlisting}
+
+ In the \lstinline{enqueue(GCTask* task)} method if the queue was allocated on the heap, we enqueue the task to the NUMA-aware queue and increment the length of the queue by one. Otherwise we use the original enqueue method.
+
+ \begin{lstlisting}[language=C]
+void GCTaskQueue::enqueue(GCTaskQueue* list) {
+  if (TraceGCTaskQueue) {
+    tty->print_cr("[" INTPTR_FORMAT "]"
+                  " GCTaskQueue::enqueue(list: "
+                  INTPTR_FORMAT ")",
+                  this);
+    print("before:");
+    list->print("list:");
+  }
+  if (list->is_empty()) {
+    // Enqueuing the empty list: nothing to do.
+    return;
+  }
+
+  uint list_length = list->length();
+  GCTask* task;
+
+  for (uint i = 0; i < list_length; ++i) {
+      task = list->dequeue();
+      enqueue(task);
+  }
+
+  set_length(length() + list_length);
+  
+  list->set_length(0);
+  if (TraceGCTaskQueue) {
+    print("after:");
+    list->print("list:");
+  }
+}
+ \end{lstlisting}
+
+ In the \lstinline{enqueue(GCTaskQueue* list)} method we remove all the task from \lstinline{list} with the \lstinline{dequeue()} method, and insert all the tasks to the queue with the \lstinline{enqueue(GCTask* task)} method.
+
+ \begin{lstlisting}[language=C]
+GCTask* GCTaskQueue::dequeue() {
+    if (!_is_c_heap_obj) {
+        return orig_dequeue();
+    }
+    else {
+        if (TraceGCTaskQueue) {
+            tty->print_cr("[" INTPTR_FORMAT "]"
+                    " GCTaskQueue::dequeue()", this);
+            print("before:");
+        }
+
+        GCTask* result = (GCTask*)numa_dequeue(context, 0);
+        if (result != NULL) {
+            decrement_length();
+        }
+
+        if (TraceGCTaskQueue) {
+            tty->print_cr("    return: " INTPTR_FORMAT, result);
+            print("after:");
+        }
+        return result;
+    }
+}
+ \end{lstlisting}
+
+ In the \lstinline{dequeue()} method if the queue was allocated on the heap, we dequeue the task from the NUMA-aware queue and decrement the length of the queue by one. Otherwise we use the original dequeue method.
+
+ We noticed that there is no need to change the method \lstinline{dequeue(uint affinity)} because the GC-Manager doesn't call that method in our case.
+
+ \newpage
+
  \section{Benchmarks}
  \subsection{Chosen Benchmarks}
  Initially, we wanted to run the same benchmarks that were introduced in the paper, but each came with its own set of problems:
