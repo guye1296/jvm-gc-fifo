@@ -45,21 +45,40 @@
 
  In our work, focused on the parallel task queue and study the impact of using different concurrent queues as the GC scheduling queue on the GC itself and the application on NUMA systems.
 
- We used an existing queue project that was provided by adam, which contains the implementation of two lock-free queues: \textit{HLCRQ} and \textit{MS-QUEUE}. With the following numa-transformations:
- \begin{itemize}
-   \item \textbf{Simple Schedualing}
-   \item \textbf{Reference Counting}
-   \item \textbf{Cache Miss Sensing}
-   \item \textbf{Workload Adaptive Transformation}
- \end{itemize}
-
- numa-transformations are heuristics for determining ownership over the synchronization variable - only the cores that are on the same ``cluster`` as the owner can access the variable.
-
- We developed our code on the a \href{https://github.com/guye1296/jvm-gc-fifo/}{following GitHub repository}. The branch \textit{msqueue-shared-lib} contains the most up to date code.
+ We developed our code on the a \href{https://github.com/guye1296/jvm-gc-fifo/}{following GitHub repository}. The branch \textit{report} contains the most up-to-date code.
 
  During our work, we encountered a LOT of difficulties - mostly during the intergation of the queues into the JVM and during the initial compilation of the project. Because of those difficulties we were not able to fully evaluate all the different queues.
 
- \newpage
+ \subsection{Queues Tested}
+
+ We used an existing queue project that was provided by Adam, which contains the implementation baseline lock-free queues: \textit{LCRQ\cite{lcrq}} and \textit{MS-QUEUE}\cite{msqueue}. With the addition of applying \textit{numa-transformations} over the synchronization variables of the queue - the \textit{head} and \textit{tail}.
+
+ The idea in all transformations is to increase the amount of cache line transfers performed inside processors and decrease the amount performed between the processors.
+ NUMA-transformations are heuristics for determining ownership over the synchronization variable - only the cores that are on the same processor as the owner can access the variable.
+
+ The following NUMA-transformations are used: 
+
+ \begin{itemize}
+   \item \textbf{Simple Schedualing} - No estimation, wait for a pre-defined timeout, and when it expires compete for ownership.
+   \item \textbf{Reference Counting} - A processor remains the owner as long as the number of cores that are in operation is greater than zero. In order to reduce contention, there is a flag per core
+	 that marks if it is in a queue operation or not. The agent counts the number of flags
+	 of the active node, when it falls to zero, it competes for ownership.
+   \item \textbf{Cache Miss Sensing} - Periodically, the agent accesses the synchronization variable`s
+	   cache line twice, the first time in order to retrieve the cache line and the second time
+	   in order to check if the cache line is still owned by it (determined by measuring access
+	   time). If the cache line is still owned by the sampling agent, it competes for ownership.
+	   The main idea of this mechanism is that if the sampling processor took ownership of
+	   the cache line and kept it, then there must be low contention on the variable at this
+	   time.
+   \item \textbf{Workload Adaptive Transformation} - Each core calculates
+	   the moving average of the time between two consecutive operations (work time) and the
+	   moving average of the time it was in operation (queue time). The queue time is determined
+	   mainly by the time it takes the core to obtain ownership of the synchronization variable`s
+	   cache line. These averages are used to estimate whether the processor should remain an
+	   owner or not.
+ \end{itemize}
+
+ We will run benchmarks again MS-QUEUE and LCRQ with all of the four mentioned NUMA-transformations. In addition we will run benchmarks again the queues without any transformation and again the original implementation of the MS-QUEUE that was provided in the paper.
 
  \subsection{Parallel Scavenge}
  \textbf{Parallel Scavenge} is the default GC of OpenJDK`s HotSpot virtual machine and is the one that provides the best performance when the number of cores increases\cite{paper}
@@ -81,18 +100,19 @@
  \newpage
 
  \section{Integration}
- We had \textit{a LOT} of problems during the compilation of the JVM
 
  \subsection{Initial Compilation}
+ We had \textit{a LOT} of problems during the compilation of the JVM.
+
  The Initial compilation of the provided version of OpenJDK took several days; We provide a script called \textit{compile.sh} which compiles the whole project.
  
  Since the code is very outdated, a lot of patches had to be made in order for the JDK to be compiled - which includes:
  \begin{itemize}
-   \item Changing timestaps of older files - the build engine terminates when it encounters file that are over 10 years "old"
+   \item Changing timestaps of older files - the build engine terminates when it encounters files that are over 10 years "old".
    \item Creating a local HTTP server to host resources that the build engine requires; the original server died:
 
    \includegraphics[width=\textwidth]{local_http_server.png}
-   \item applying a few patches to libalsa (my distribution's libalsa was too new for the JDK to build on - the API was broken)
+   \item applying a few patches to libalsa (my distribution's libalsa was too new for the JDK to build on - the API was broken).
  \end{itemize}
 
  Luckily, we found the \href{http://www.voidcn.com/article/p-zayqisji-va.html}{following blog post} which covered the rest of the unresolved errors.
@@ -120,7 +140,7 @@
    extern Globals* create_global_context();
  \end{lstlisting}
 
- We tried to mask out the NUMA transformation method that is beging used and the queue structure from the JVM in order to create a consistant interface. Sadly, we have to re-compile the project when switching between MSQUEUE and HLCRQ because the \textit{Globals} structure contains the inner queue definition.
+ We tried to mask out the NUMA transformation method that is beging used and the queue structure from the JVM in order to create a consistant interface. Sadly, we have to re-compile the project when switching between MSQUEUE and LCRQ because the \textit{Globals} structure contains the inner queue definition.
 
  \begin{itemize}
    \item The \textit{Globals} is used to save the queue used and the schedualing method that was chosen.
@@ -183,8 +203,7 @@
  \newpage
 
  \subsection{Replacing GC task queue with NUMA Aware Queues}
- The HotSpot JVM is a huge project with a lot of files and it was really hard to find the exact location of the GC task queue.
- In order to find the GC task queue and replace it with the NUMA Aware Queues we looked over the change log of the scalability study\cite{paper} to find the exact location of the queue.
+ The HotSpot JVM is a huge project with a lot of files and it was hard to find the exact location of the GC task queue.
 
  We found that the GC task queue is implemented in \textit{GCTaskQueue} located in \texttt{./hotspot/src/share/vm/gc\_implementation/parallelScavenge/gcTaskManager.hpp}.
 
@@ -226,7 +245,7 @@ void GCTaskQueue::initialize() {
 }
  \end{lstlisting}
 
- In the \lstinline{initialize()} method we allocate memory for the NUMA-aware queue and initialize it. if the queue was allocated on the heap we use the original initialize steps.
+ In the \lstinline{initialize()} method we allocate memory for the NUMA-aware queue and initialize it. If the queue was allocated on the heap we use the original initialize steps.
 
  \begin{lstlisting}[language=C]
 void GCTaskQueue::destruct() {
@@ -333,16 +352,18 @@ GCTask* GCTaskQueue::dequeue() {
  Initially, we wanted to run the same benchmarks that were introduced in the paper, but each came with its own set of problems:
 
  \begin{itemize}
-   \item \textbf{SPECjbb2005} isnt freely available
+   \item \textbf{SPECjbb2005} isn`t freely available.
    \item \textbf{DaCapo} was very unstable. We tried hacking it quite a bit but with not too much success.
-       We tried to ran tradesoap and eclipse and sometimes the run succeeded, and somtimes we ran into runtime errors:
+
+	   We tried to ran \textit{tradesoap} and \textit{eclipse} and sometimes the run succeeded, and somtimes we ran into runtime errors:
 
  \includegraphics[width=\textwidth]{dacapo_error.png}
 
-         This errors occurred even when we used the java version that was installed on the server.
+         This error occurred even when we used the java version that was installed on the server.
          After some research we found a post that suggest to avoid using parallelism options of the GC (the UseParallelOldGC option of the JVM). When we didn't use this option there were no runtime errors anymore.
+
          Thus, we decided to drop off this benchmark.
-   \item \textbf{SPECjvm2008} - which several of its benchmarks were used in the paper. We only used \textit{transform.xml}.
+   \item \textbf{SPECjvm2008} - which several of its benchmarks were used in the paper. We only used \textit{transform.xml} because we did not have enough time to run all of the other benchmarks that were mentioned in the paper.
  \end{itemize}
 
  \subsection{Benchmarks Setup}
@@ -356,15 +377,15 @@ GCTask* GCTaskQueue::dequeue() {
  \end{equation}
 
  \begin{itemize}
-   \item \textit{young generation work} is the total bytes that were transferred in the young generation
-   \item \textit{total time spent in young gc} is the total execution time in young the GC generation
+   \item \textit{young generation work} is the total bytes that were transferred in the young generation.
+   \item \textit{total time spent in young gc} is the total execution time in young the GC generation.
  \end{itemize}
 
  Luckily for us, the initial author had already printed these values (and more) in the JVM exit point:
 
  \includegraphics[width=\textwidth]{gc-debug-prints.png}
 
- The script \texttt{run\_benchmarks.sh} runs the benchmarks with different configurations - it iterates on all the different queues (msqueue and hlcrq), numa schedualing methods and an increasing number of cores. It saves the result to log files which are later on parsed by it into a .csv file - in which its left colomn is the number of processes and its right column is the GC throuhput for the given core.
+ The script \texttt{run\_benchmarks.sh} runs the benchmarks with different configurations - it iterates over all the different queues (msqueue and LCRQ), numa schedualing methods and an increasing number of cores. It saves the result to log files which are later on parsed by it into a .csv file - in which its left colomn is the number of processes and its right column is the GC throuhput for the given core.
 This gave us the ability to quickly analyze results of different runs.
 
  \newpage
@@ -381,7 +402,7 @@ This gave us the ability to quickly analyze results of different runs.
 
  \subsubsection{MSQUEUE}
 
- \subsubsection{HLCRQ}
+ \subsubsection{LCRQ}
 
  \subsection{Conclusion}
 
@@ -393,6 +414,12 @@ This gave us the ability to quickly analyze results of different runs.
     \bibitem{paper}
       Lokesh Gidra, Gael Thomas, Julien Sopena and Marc Shapiro: "A Study of the Scalability of Stop-the-world Garbage Collectors on Multicores"
       \\\texttt{https://hal.inria.fr/hal-00868012/document}
+    \bibitem{lcrq}
+      ``Fast Concurrent Queues for x86 Processors``
+      \\\texttt{(https://www.cs.tau.ac.il/~mad/publications/ppopp2013-x86queues.pdf)}
+    \bibitem{msqueue}
+	    Maged M. Michael, Michael L. Scott: ``Simple, Fast, and Practical Non-Blocking and Blocking Concurrent Queue Algorithms``
+      \\\texttt{http://www.cs.rochester.edu/~scott/papers/1996\_PODC\_queues.pdf}
   \end{thebibliography}
 
 \end{document}
