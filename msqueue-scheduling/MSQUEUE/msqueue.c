@@ -107,16 +107,8 @@ Object dequeue(queue_t* p_msqueu, int pid) {
     while (true) { // Keep trying until Dequeue is done
         head = p_msqueu->Head; // Read Head
         next = head->next; // read next.ptr and next.count
-        if (next == NULL) { //Is queue empty
-        	tail = p_msqueu->Tail; // read Tail
-			//If Tail is falling behind.  Try to advance it
-			if (tail != next) {
-				thread_cas_counters.tail_cas_trials++;
-				if (!CAS64(&p_msqueu->Tail, tail, next)){
-					thread_cas_counters.tail_cas_failures++;
-				}
-			} else
-				return NULL; // Queue is empty, couldn't dequeue
+        if (head == p_msqueu->Tail) { //Is queue empty
+        		return NULL; // Queue is empty, couldn't dequeue
 			backoff_delay(&backoff);
 		} else {
 			// No need to deal with Tail

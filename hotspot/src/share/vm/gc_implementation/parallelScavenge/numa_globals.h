@@ -1,5 +1,6 @@
 #ifndef _NUMA_GLOBALS_H
 #define _NUMA_GLOBALS_H
+#define MSQUEUE
 
 #include <stdio.h>
 #include <stdlib.h>
