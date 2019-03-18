@@ -1,16 +1,15 @@
 #!/bin/bash
 
-QUEUES=( 'msqueue' 'hlcrq')
+#QUEUES=( 'msqueue' 'hlcrq')
+QUEUES=( 'msqueue')
 NUMA_METHODS=( 'work-time-queue' 'no-scheduling' 'primitive' 'ref-count' 'cache-miss')
-THREADS=( 1 2 4 8 16 32 48 64 80 96 112 128 144 160 176)
+THREADS=( 8 16 32 48 64 80 96 112 128 144 160 176)
 
 QUEUES_DIR=`pwd`/msqueue-scheduling
 
 export MY_JAVA=`pwd`/build/linux-amd64/bin/java
 SPEC_DIR=/a/home/cc/students/cs/guyezer/shared_folder/guy/SPECjvm2008
 
-# set LD_PRELOAD
-export LD_PRELOAD="$QUEUES_DIR/libnuma_queue.so $QUEUES_DIR/papi/lib/libpapi.so $QUEUES_DIR/msqueue-scheduling/libjemalloc.so"
 
 
 for QUEUE in "${QUEUES[@]}"; do
@@ -39,8 +38,14 @@ for QUEUE in "${QUEUES[@]}"; do
 	    # compile libnuma_queue
             pushd . > /dev/null
             cd $QUEUES_DIR/
-            make $QUEUE use_cpus=$CORES n_threads=$CORES scheduling_method_num=$SCHEDULING_METHOD_NUM
+            make $QUEUE n_threads=$CORES scheduling_method_num=$SCHEDULING_METHOD_NUM || exit
+            
             popd > /dev/null
+
+            echo running with $CORES cores
+
+            # set LD_PRELOAD
+            export LD_PRELOAD="$QUEUES_DIR/libnuma_queue.so $QUEUES_DIR/papi/lib/libpapi.so $QUEUES_DIR/libjemalloc.so"
 
             # run benchmark
             pushd . > /dev/null
@@ -53,16 +58,18 @@ for QUEUE in "${QUEUES[@]}"; do
                 -ikv --lagom -i 1 -ops 40 -bt 48 xml.transform > $LOG_FILE
 
             popd > /dev/null
+            
+            echo finished running with $CORES cores
 
         done
 
         # generate csv report for all cores
-        cd $QUEUES_DIR/
+        cd $SPEC_DIR/$QUEUE/$METHOD
         pushd . > /dev/null
         for BENCHMARK_LOG_FILE in *.log; do
             THROUGHPUT=$(awk '/(Young work .*)|(Young GC Time.*)/ { print $4 }' $LOG_FILE | xargs echo | awk '{ print int($1/$2) }')
             FILENAME=$BENCHMARK_LOG_FILE
-            FILENAME="${filename%.*}"
+            FILENAME="${FILENAME%.*}"
             echo $FILENAME,$THROUGHPUT >> throughput.csv
         done
 
