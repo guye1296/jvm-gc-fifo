@@ -107,7 +107,7 @@ Object dequeue(queue_t* p_msqueu, int pid) {
     while (true) { // Keep trying until Dequeue is done
         head = p_msqueu->Head; // Read Head
         next = head->next; // read next.ptr and next.count
-        if (head == p_msqueu->Tail) { //Is queue empty
+        if (p_msqueu->Head == p_msqueu->Tail) { //Is queue empty
         		return NULL; // Queue is empty, couldn't dequeue
 			backoff_delay(&backoff);
 		} else {
