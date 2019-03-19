@@ -67,7 +67,7 @@
  Today, the best performing queues still have contended hot spots (namely, the queue head and tail). These hot spots are particularly painful when queues are used on modern non-uniform memory access (NUMA) machines. These machines have multiple processors, each of which has multiple cores.
  The overhead of contended hot spots on a NUMA machine is very high because of the latency of transferring a cache line between processors is orders of magnitudes higher than transferring a line between cores in the same processor.
 
- In our work, focused on the parallel task queue and study the impact of using different concurrent queues as the GC scheduling queue on the GC itself and the application on NUMA systems.
+ In our work, we focused on the parallel task queue and study the impact of using different concurrent queues as the GC scheduling queue on the GC itself and the application on NUMA systems.
 
  We developed our code on the a \href{https://github.com/guye1296/jvm-gc-fifo/}{following GitHub repository} (\href{https://github.com/guye1296/jvm-gc-fifo/invitations}{invite link}). The branch \textit{report} contains the most up-to-date code.
 
@@ -75,7 +75,7 @@
 
  \subsection{Queues Tested}
 
- We used an existing queue project that was provided by Adam, which contains the implementation baseline lock-free queues: \textit{LCRQ\cite{lcrq}} and \textit{MS-QUEUE}\cite{msqueue}. With the addition of applying \textit{numa-transformations} over the synchronization variables of the queue - the \textit{head} and \textit{tail}.
+ We used an existing queue project that was provided by Adam, which contains the implementation baseline lock-free queues: \textit{LCRQ\cite{LCRQ}} and \textit{MS-QUEUE}\cite{MSQUEUE}, with the addition of applying \textit{NUMA-transformations} over the synchronization variables of the queue - the \textit{head} and \textit{tail}.
 
  The idea in all transformations is to increase the amount of cache line transfers performed inside processors and decrease the amount performed between the processors.
  NUMA-transformations are heuristics for determining ownership over the synchronization variable - only the cores that are on the same processor as the owner can access the variable.
@@ -83,18 +83,18 @@
  The following NUMA-transformations are used: 
 
  \begin{itemize}
-   \item \textbf{Simple Schedualing} - No estimation, wait for a pre-defined timeout, and when it expires compete for ownership.
-   \item \textbf{Reference Counting} - A processor remains the owner as long as the number of cores that are in operation is greater than zero. In order to reduce contention, there is a flag per core
+	 \item \textbf{Simple Schedualing (primitive)} - No estimation, wait for a pre-defined timeout, and when it expires compete for ownership.
+   \item \textbf{Reference Counting (ref-count)} - A processor remains the owner as long as the number of cores that are in operation is greater than zero. In order to reduce contention, there is a flag per core
 	 that marks if it is in a queue operation or not. The agent counts the number of flags
 	 of the active node, when it falls to zero, it competes for ownership.
-   \item \textbf{Cache Miss Sensing} - Periodically, the agent accesses the synchronization variable`s
+ \item \textbf{Cache Miss Sensing (cache-miss)} - Periodically, the agent accesses the synchronization variable`s
 	   cache line twice, the first time in order to retrieve the cache line and the second time
 	   in order to check if the cache line is still owned by it (determined by measuring access
 	   time). If the cache line is still owned by the sampling agent, it competes for ownership.
 	   The main idea of this mechanism is that if the sampling processor took ownership of
 	   the cache line and kept it, then there must be low contention on the variable at this
 	   time.
-   \item \textbf{Workload Adaptive Transformation} - Each core calculates
+   \item \textbf{Workload Adaptive Transformation (work-time-queue)} - Each core calculates
 	   the moving average of the time between two consecutive operations (work time) and the
 	   moving average of the time it was in operation (queue time). The queue time is determined
 	   mainly by the time it takes the core to obtain ownership of the synchronization variable`s
@@ -102,20 +102,20 @@
 	   owner or not.
  \end{itemize}
 
- We will run benchmarks again MS-QUEUE and LCRQ with all of the four mentioned NUMA-transformations. In addition we will run benchmarks again the queues without any transformation and again the original implementation of the MS-QUEUE that was provided in the paper.
+ We ran benchmarks again MS-QUEUE and LCRQ with all of the four mentioned NUMA-transformations. In addition we ran benchmarks against the queues without any transformation and against the original implementation of the MS-QUEUE that was provided in the paper.
 
  \subsection{Parallel Scavenge}
  \textbf{Parallel Scavenge} is the default GC of OpenJDK`s HotSpot virtual machine and is the one that provides the best performance when the number of cores increases\cite{paper}
- Parallel Scalability is a stop-the-world GC, meaning that the GC pauses the application threads during collection to prevent concurrent memory accesses from the application.
+ Parallel Scavenge is a stop-the-world GC, meaning that the GC pauses the application threads during collection to prevent concurrent memory accesses from the application.
 
- The garbage collection is activated once the the memory buffers that are provided to the application are full; The following diagram shows the phases of Parallel Scavenge:
+ The garbage collection is activated once the memory buffers that are provided to the application are full; The following diagram shows the phases of Parallel Scavenge:
 
  \includegraphics[width=\textwidth]{gc_phases.png}
 
  During the \textit{Initialisation Phase}, a single thread, called the VM thread, prepares GC tasks, which are executed in the \textit{Parallel Phase} by the GC threads.
- As soon as all the mutators are suspended, the VM thread initialises the queue of GC tasks. The task queue is implemented as a singly-linked list that is protected by a Monitor.
+ As soon as all the mutators (application threads) are suspended, the VM thread initialises the queue of GC tasks. The task queue is implemented as a singly-linked list that is protected by a Monitor.
 
- Each GC thread fetches tasks from the queue in a concurrent matter. The \textit{Termination Protocol} is used to determine that the collection is done - meaning that every GC thread finished all its tasks and that there are no more GC tasks. 
+ Each GC thread fetches tasks from the queue in a concurrent matter. The \textit{Termination Protocol} is used to determine that the collection is done - meaning that every GC thread finishes all its tasks and that there are no more GC tasks. 
  
  When the termination protocol finished - the \textit{Final Phase} begins. The \textit{Final Phase} mainly resizes the heap and wakes up the mutators.
  
@@ -153,13 +153,13 @@
    \item Compiling the JVM takes quite a while, and some times has to be compiled from scratch. Switching between NUMA transformation will only require to recompile the shared library and will result in shorter compilation times.
  \end{itemize}
 
- We maintain that library at \texttt{./msqueue-schedualing/}. 
+ We maintain that library at \texttt{./MSQUEUE-schedualing/}. 
 
  We then proceeded to define an API for the JVM to use:
  \begin{lstlisting}[language=C]
-   extern void numa_enqueue(Globals* context, Object arg, int pid);
+   extern void NUMA_enqueue(Globals* context, Object arg, int pid);
 
-   extern Object numa_dequeue(Globals* context, int pid);
+   extern Object NUMA_dequeue(Globals* context, int pid);
    
    extern Globals* create_global_context();
  \end{lstlisting}
@@ -168,20 +168,20 @@
 
  \begin{itemize}
    \item The \textit{Globals} is used to save the queue used and the schedualing method that was chosen.
-   \item \textit{numa\_enqueue} is used to enqueue an address.
-   \item \textit{numa\_dequeue} is used to dequeue an andress from the queue. If the queue is empty - it returns NULL.
+   \item \textit{NUMA\_enqueue} is used to enqueue an address.
+   \item \textit{NUMA\_dequeue} is used to dequeue an andress from the queue. If the queue is empty - it returns NULL.
  \end{itemize}
 
- Here is the implementation of the API. It can be seen that \textit{numa\_dequeue} performs a NUMA transformation on the queue's tail and head:
+ Here is the implementation of the API. It can be seen that \textit{NUMA\_dequeue} performs a NUMA transformation on the queue's tail and head:
 
  \begin{lstlisting}[language=C]
-   #include "numa_queue.h"
+   #include "NUMA_queue.h"
    
-   extern void numa_enqueue(Globals* context, Object arg, int pid) {
+   extern void NUMA_enqueue(Globals* context, Object arg, int pid) {
        enqueue(&context->queue, arg, pid);
    }
    
-   extern Object numa_dequeue(Globals* context, int pid){
+   extern Object NUMA_dequeue(Globals* context, int pid){
        Object obj;
    
    #ifdef MSQUEUE
@@ -211,7 +211,7 @@
    }
  \end{lstlisting}
 
- For future reference, the following places in the JDK`s build system were changed in order to link agains \textit{libnuma\_queue}:
+ For future reference, the following places in the JDK`s build system were changed in order to link agains \textit{libNUMA\_queue}:
  \begin{itemize}
    \item \texttt{./hotspot/make/linux/build.sh} - Contains the top-level \textit{LD\_LIBRARY\_PATH}.
 
@@ -293,7 +293,7 @@ void GCTaskQueue::enqueue(GCTask* task) {
             print("before:");
         }
         assert(task != NULL, "shouldn't have null task");
-        numa_enqueue(context, (uint64_t)task, 0);
+        NUMA_enqueue(context, (uint64_t)task, 0);
         increment_length();
         if (TraceGCTaskQueue) {
             print("after:");
@@ -351,7 +351,7 @@ GCTask* GCTaskQueue::dequeue() {
             print("before:");
         }
 
-        GCTask* result = (GCTask*)numa_dequeue(context, 0);
+        GCTask* result = (GCTask*)NUMA_dequeue(context, 0);
         if (result != NULL) {
             decrement_length();
         }
@@ -371,7 +371,7 @@ GCTask* GCTaskQueue::dequeue() {
 
  \subsection{MS-QUEUE Bug Fix}
 
- When first running the MS-QUEUE implementation that was given in the repository a runtime error occured. After some debugging we figured out that there is a null pointer dereference in \texttt{./msqueue-schedualing/MSQUEUE/msqueue.c:enqueue}
+ When first running the MS-QUEUE implementation that was given in the repository a runtime error occured. After some debugging we figured out that there is a null pointer dereference in \texttt{./MSQUEUE-schedualing/MSQUEUE/MSQUEUE.c:enqueue}
 
  \begin{lstlisting}[language=C]
  void enqueue(queue_t* p_msqueu, Object arg, int pid) {
@@ -472,7 +472,7 @@ while (true) { // Keep trying until Dequeue is done
 
 \begin{itemize}
 \item The condition check whether or not the queue is empty has changed to \texttt{p\_msqueu->Head == p\_msqueu->Tail} - because there are no enqueues this can be considered an atomic action, because tail is fixed.
-\item The condition the check whether or not the tail has shifted is redundant because there are no enqueue calls - it is safe to return NULL.
+\item The check whether or not the tail has shifted is redundant because there are no enqueue calls - it is safe to return NULL.
 \end{itemize}
 
  \newpage
@@ -485,7 +485,7 @@ while (true) { // Keep trying until Dequeue is done
    \item \textbf{SPECjbb2005} isn`t freely available.
    \item \textbf{DaCapo} was very unstable. We tried hacking it quite a bit but with not too much success.
 
-	   We tried to ran \textit{tradesoap} and \textit{eclipse} and sometimes the run succeeded, and somtimes we ran into runtime errors:
+	   We tried to run \textit{tradesoap} and \textit{eclipse} and sometimes the run succeeded, and somtimes we ran into runtime errors:
 
  \includegraphics[width=\textwidth]{dacapo_error.png}
 
@@ -515,7 +515,7 @@ while (true) { // Keep trying until Dequeue is done
 
  \includegraphics[width=\textwidth]{gc-debug-prints.png}
 
- The script \texttt{run\_benchmarks.sh} runs the benchmarks with different configurations - it iterates over all the different queues (msqueue and LCRQ), numa schedualing methods and an increasing number of cores. It saves the result to log files which are later on parsed by it into a .csv file - in which its left colomn is the number of processes and its right column is the GC throuhput for the given core.
+ The script \texttt{run\_benchmarks.sh} runs the benchmarks with different configurations - it iterates over all the different queues (MSQUEUE and LCRQ), NUMA schedualing methods and an increasing number of cores. It saves the result to log files which are later on parsed by it into a .csv file - in which its left colomn is the number of processes and its right column is the GC throuhput for the given core.
 This gave us the ability to quickly analyze results of different runs.
 
  \newpage
@@ -525,42 +525,58 @@ This gave us the ability to quickly analyze results of different runs.
 
  \includegraphics[width=\textwidth]{graph-no-schedule.png}
 
- It is seen that the original implementation (\textit{``NAPS``}) has the least amount of throughout (TP) between the three queues. The given MSQUEUE and LCRQ have about the same performane without NUMA transformations - altough LCRQ has somewhat better performance in a high number of cores.
+ It is seen that the original implementation (\textit{``NAPS``}) has the least amount of throughout (TP) between the three queues. 
+ 
+ The given MSQUEUE and LCRQ have about the same performane without NUMA transformations - altough MSQUEUE has somewhat better performance in a high number of cores. 
+ 
+ This is probably an implementation detail - because the \textit{evaluation} section on the LCRQ paper\cite{LCRQ} showed that LCRQ outperforms MSQUEUE even on a high amount of cores (up to 160).
 
- ** TODO ** - difference between NAPS and given MS-QUEUE
+ We believe that the change that was made by us is not the reason for that difference: 
+
+ \begin{itemize}
+   \item There is no speedup gained by the deletion of the \lstinline{CAS64(&p_msqueu->Tail, tail, next));} line  - it is never called because there are no calls to \lstinline{enqueue} during a \lstinline{dequeue} operation - meaning that \lstinline{tail==next} at all calls, so the branch is never taken.
+   \item Because there are no calls to \lstinline{enqueue} during a \lstinline{deqeuue} operation, the branch predicors are always accurate. The deletion of the branch \lstinline{if (tail != next)} does not provide speedup.
+ \end{itemize}
+ 
 
  \subsubsection{MSQUEUE}
 
  \includegraphics[width=\textwidth]{graph-msqueue.png}
 
- There is a noticable improvement that is caused by NUMA transformations. It can be seen that all of the different transformations that were run achieved better TP than the \textit{no transformation} run. 
+ There is a noticable improvement that was caused by NUMA transformations. 
+ 
+ It can be seen that all of the different transformations that were run achieved better TP than the \textit{no schedule} run. 
 
- In the specific context - **TODO** rank the NUMA transformations
+ In the specific context - it looks like \textit{ref-count} and \textit{cache-miss} had the best affect on the TP. It also seems that \textit{work-time-queue}, which is a sophisticated heuristic than \textit{primitive} was less successful.
 
+ It can be also seen that \textit{ref-count} does not scale well beyond 128 cores. This should be not surprising since a processor remains the owner as long as the number of cores that are in operation is greater than zero. At a high number of cores - this may leave many cores hanging.
 
 
  \subsubsection{LCRQ}
 
  \includegraphics[width=\textwidth]{graph-lcrq.png}
 
- There is \textbf{no} noticable improvement caused by NUMA transformations. It it worth noting that in LCRQ, unlike MS-QUEUE, there are additional synchronization variables to the queue's head and tail - the \textit{hazard pointers} and the \textit{nrq} (**TODO** - what is nrq?), which are used heavily in the implementation.
+ There is \textbf{no} noticable improvement caused by NUMA transformations. 
+ 
+ It is worth noting that in the LCRQ implementation, unlike MS-QUEUE, there are additional synchronization variables to the queue's head and tail - the \textit{hazard pointers} and the \textit{nrq} variable which are used heavily in the implementation:
 
  \begin{lstlisting}[language=C]
 extern __thread RingQueue *nrq;
 extern __thread RingQueue *hazardptr;
  \end{lstlisting}
 
- Because there are no NUMA transformations over those two variables, the overall affect of NUMA transformations in LCRQ is small.
+ Because there are no NUMA transformations over those two variables, the overall affect of NUMA transformations in LCRQ is probably small.
 
  \subsection{Conclusions}
 
+ We presented an evaluation on the effect of different queues and NUMA-transformations on Parallel Scavenge TP. 
+ 
+ After a lot of integration that had to be made in order to perform the evaluation, the following results were gathered:
+
  \begin{itemize}
-   \item NUMA transformations can make a lot of impact **TODO**
-   \item Indentifying all the synchronization variable hotspots is vital to **TODO**
-   \item We managed to improve the GC throughout by using the NUMA-aware queues.
-   \item Without NUMA Transformation it seems that both msqueue and lcrq achieve about the same results.
-   \item As we seen in the previous section we managed to improve msqueue results with NUMA transformations in contrast to lcrq results. Thus msqueue achieved the best results.
-   \item ** TODO **
+   \item Without NUMA-transformation it seems that both MSQUEUE and LCRQ achieve about the same results. Both perform better the the paper's implementation of MSQUEUE.
+   \item We managed to improve the GC throughout by using NUMA-transformations on the MSQUEUE. It was shown that different NUMA-transformations had different affect and scalability on the TP of the GC.
+   \item NUMA-transformations had little to no effect on LCRQ. This may be because there were other synchronization hotspots that had no NUMA-transformations applied on.
  \end{itemize}
 
   % references
@@ -571,10 +587,10 @@ extern __thread RingQueue *hazardptr;
     \bibitem{paper}
       Lokesh Gidra, Gael Thomas, Julien Sopena and Marc Shapiro: "A Study of the Scalability of Stop-the-world Garbage Collectors on Multicores"
       \\\texttt{https://hal.inria.fr/hal-00868012/document}
-    \bibitem{lcrq}
+    \bibitem{LCRQ}
       ``Fast Concurrent Queues for x86 Processors``
       \\\texttt{(https://www.cs.tau.ac.il/~mad/publications/ppopp2013-x86queues.pdf)}
-    \bibitem{msqueue}
+    \bibitem{MSQUEUE}
 	    Maged M. Michael, Michael L. Scott: ``Simple, Fast, and Practical Non-Blocking and Blocking Concurrent Queue Algorithms``
       \\\texttt{http://www.cs.rochester.edu/~scott/papers/1996\_PODC\_queues.pdf}
   \end{thebibliography}
