@@ -3,10 +3,34 @@
 \usepackage{graphicx}
 \usepackage{hyperref}
 \usepackage{listings}
+\usepackage{color}
 \usepackage{lmodern}  % for bold teletype font
 \usepackage{amsmath}  % for \hookrightarrow
 \usepackage{xcolor}   % for \textcolor
 \usepackage{biblatex}
+\usepackage{soul}
+
+ \lstnewenvironment{teX}[1][]
+      {\lstset{language=[LaTeX]TeX}\lstset{escapeinside={(*@}{@*)},
+       numbers=left,numberstyle=\normalsize,stepnumber=1,numbersep=5pt,
+       breaklines=true,
+       %firstnumber=last,
+           %frame=tblr,
+           framesep=5pt,
+           basicstyle=\normalsize\ttfamily,
+           showstringspaces=false,
+           keywordstyle=\itshape\color{blue},
+          %identifierstyle=\ttfamily,
+           stringstyle=\color{maroon},
+        commentstyle=\color{black},
+        rulecolor=\color{black},
+        xleftmargin=0pt,
+        xrightmargin=0pt,
+        aboveskip=\medskipamount,
+        belowskip=\medskipamount,
+               backgroundcolor=\color{white}, #1
+    }}
+    {}
 
 \title{Evaluating Performance of Different FIFO Queues in the Java Virtual Machine's Garbage Collector}
 \date{2019-03-16}
@@ -45,7 +69,7 @@
 
  In our work, focused on the parallel task queue and study the impact of using different concurrent queues as the GC scheduling queue on the GC itself and the application on NUMA systems.
 
- We developed our code on the a \href{https://github.com/guye1296/jvm-gc-fifo/}{following GitHub repository}. The branch \textit{report} contains the most up-to-date code.
+ We developed our code on the a \href{https://github.com/guye1296/jvm-gc-fifo/}{following GitHub repository} (\href{https://github.com/guye1296/jvm-gc-fifo/invitations}{invite link}). The branch \textit{report} contains the most up-to-date code.
 
  During our work, we encountered a LOT of difficulties - mostly during the intergation of the queues into the JVM and during the initial compilation of the project. Because of those difficulties we were not able to fully evaluate all the different queues.
 
@@ -345,6 +369,110 @@ GCTask* GCTaskQueue::dequeue() {
 
  We noticed that there is no need to change the method \lstinline{dequeue(uint affinity)} because the GC-Manager doesn't call that method in our case.
 
+ \subsection{MS-QUEUE Bug Fix}
+
+ When first running the MS-QUEUE implementation that was given in the repository a runtime error occured. After some debugging we figured out that there is a null pointer dereference in \texttt{./msqueue-schedualing/MSQUEUE/msqueue.c:enqueue}
+
+ \begin{lstlisting}[language=C]
+ void enqueue(queue_t* p_msqueu, Object arg, int pid) {
+	node_t* node = new_node();	// Allocate a new node from the free list
+	volatile node_t* tail = null;
+	node_t* next = null;
+	node->value = arg;	// Copy enqueued value into node
+	node->next = null;	// Set next pointer of node to NULL
+	reset_backoff(&backoff);
+	while (true) {			// Keep trying until Enqueue is done
+		//  *** null pointer dereference here ***
+		tail = p_msqueu->Tail; 
+		// Read Tail.ptr and Tail.count together
+		next = tail->next;	
+	...
+ \end{lstlisting}
+
+By using gdb watchpoints, We were able to find that the function that causes the dereference is \texttt{dequeue}:
+
+\includegraphics[width=\textwidth]{watchpoint.png}
+
+Here, we can see that a CAS instruction caused NULL to be put in the queue's tail.
+By applying backtrace, we found the \texttt{dequeue} causes the bug:
+
+\includegraphics[width=\textwidth]{bt.png}
+
+\texttt{dequeue}`s code:
+
+\begin{lstlisting}[language=C]
+Object dequeue(queue_t* p_msqueu, int pid) {
+	volatile node_t *head, *tail, *next;
+	Object value;
+
+	// Keep trying until Dequeue is done
+	while (true) { 
+		head = p_msqueu->Head; 
+		next = head->next;
+		//Is queue empty
+		if (next == NULL) { 
+			tail = p_msqueu->Tail; 
+			//If Tail is falling behind.  Try to advance it
+			if (tail != next)
+				CAS64(&p_msqueu->Tail, tail, next));
+			else
+				// Queue is empty, couldn't dequeue
+				return NULL; 
+			backoff_delay(&backoff);
+
+		else {
+			// No need to deal with Tail
+			// Read value before CAS64
+			// Otherwise, another dequeue might free the next node
+			value = next->value;
+			// Try to swing Head to the next node
+			if (CAS64(&p_msqueu->Head, head, next)) {
+			// Dequeue is done.  Exit loop
+				break;
+			}
+			backoff_delay(&backoff);
+		}
+	}
+
+	free_node(head);	// It is safe now to free the old node
+	return value; // Queue was not empty, dequeue succeeded
+}
+	
+\end{lstlisting}
+
+If \texttt{dequeue} is applied to an empty queue, the following condition is correct:
+
+\begin{lstlisting}[language=C]
+if (tail != next)
+    CAS64(&p_msqueu->Tail, tail, next));
+\end{lstlisting}
+
+This is true because \textit{tail} is not NULL but an actuall address, and \textit{next} is set to null because \textit{head} is an empty node. Here is the GDB output before the CAS:
+
+\includegraphics[width=\textwidth]{before-cas.png}
+
+And here is the GDB output after the CAS:
+
+\includegraphics[width=\textwidth]{after-cas.png}
+
+The following changes were made to \texttt{dequeue} - note that we take advantage of that fact the \texttt{enqueue} and \texttt{dequeue} do not happen concurrently:
+
+\begin{lstlisting}[language=C]
+...
+while (true) { // Keep trying until Dequeue is done
+    head = p_msqueu->Head; 
+    next = head->next; 
+
+    if (p_msqueu->Head == p_msqueu->Tail) { 
+        return NULL; 
+...
+\end{lstlisting}
+
+\begin{itemize}
+\item The condition check whether or not the queue is empty has changed to \texttt{p\_msqueu->Head == p\_msqueu->Tail} - because there are no enqueues this can be considered an atomic action, because tail is fixed.
+\item The condition the check whether or not the tail has shifted is redundant because there are no enqueue calls - it is safe to return NULL.
+\end{itemize}
+
  \newpage
 
  \section{Benchmarks}
@@ -391,20 +519,29 @@ This gave us the ability to quickly analyze results of different runs.
  \newpage
 
  \subsection{transform.xml Results}
- Our result were not good - there may have been noise or that we have ran out tests wrogly. Since we couldn't get much run time on the server (after fixing all of our bugs) we did not have time to inspect that.
+ ** TODO **
 
- \subsubsection{without changes}
+ \subsubsection{Comparison of Different Queues}
 
- \includegraphics[width=\textwidth]{graph-no-changes.png}
+ \includegraphics[width=\textwidth]{graph-no-schedule.png}
 
- Here you can see that, generally, that as the number of cores go up, the throughput goes up - until it reaches its peak at 32 cores, and then the throughput goes down. This could be because of contention over a shared resource.
- 
+ ** TODO **
 
  \subsubsection{MSQUEUE}
 
+ \includegraphics[width=\textwidth]{graph-msqueue.png}
+
+ ** TODO **
+
  \subsubsection{LCRQ}
 
+ \includegraphics[width=\textwidth]{graph-lcrq.png}
+
+ ** TODO **
+
  \subsection{Conclusion}
+
+ ** TODO **
 
   % references
   \medskip
