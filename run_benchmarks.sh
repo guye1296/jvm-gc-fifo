@@ -64,8 +64,9 @@ for QUEUE in "${QUEUES[@]}"; do
         done
 
         # generate csv report for all cores
-        cd $SPEC_DIR/$QUEUE/$METHOD
         pushd . > /dev/null
+
+        cd $SPEC_DIR/$QUEUE/$METHOD
         for BENCHMARK_LOG_FILE in *.log; do
             THROUGHPUT=$(awk '/(Young work .*)|(Young GC Time.*)/ { print $4 }' $LOG_FILE | xargs echo | awk '{ print int($1/$2) }')
             FILENAME=$BENCHMARK_LOG_FILE
