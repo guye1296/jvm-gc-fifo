@@ -71,7 +71,7 @@
 
  We developed our code on the a \href{https://github.com/guye1296/jvm-gc-fifo/}{following GitHub repository} (\href{https://github.com/guye1296/jvm-gc-fifo/invitations}{invite link}). The branch \textit{report} contains the most up-to-date code.
 
- During our work, we encountered a LOT of difficulties - mostly during the intergation of the queues into the JVM and during the initial compilation of the project. Because of those difficulties we were not able to fully evaluate all the different queues.
+ During our work, we encountered a LOT of difficulties - mostly during the intergation of the queues into the JVM and during the initial compilation of the project.
 
  \subsection{Queues Tested}
 
@@ -455,7 +455,9 @@ And here is the GDB output after the CAS:
 
 \includegraphics[width=\textwidth]{after-cas.png}
 
-The following changes were made to \texttt{dequeue} - note that we take advantage of that fact the \texttt{enqueue} and \texttt{dequeue} do not happen concurrently:
+In our implementation, \lstinline{enqueue(GCTaskQueue* list)} calls \lstinline{dequeue} - meaning that a \lstinline{dequeue} is called before \lstinline{enqueue} - causing the said NULL pointer dereference.
+
+The following changes were made to \texttt{dequeue} - note that we take advantage of that fact the \texttt{enqueue} and \texttt{dequeue} do not happen concurrently - because all of the \lstinline{enqueue} calls are called from the \textit{VM Thread} and are called before the \textit{Parallel Phase} \lstinline{dequeue}:
 
 \begin{lstlisting}[language=C]
 ...
@@ -519,11 +521,11 @@ This gave us the ability to quickly analyze results of different runs.
  \newpage
 
  \subsection{transform.xml Results}
- ** TODO **
-
  \subsubsection{Comparison of Different Queues}
 
  \includegraphics[width=\textwidth]{graph-no-schedule.png}
+
+ It is seen that the original implementation (\textit{``NAPS``}) has the least amount of throughout (TP) between the three queues, and that given MSQUEUE and LCRQ have about the same performane - altough LCRQ has somewhat better performance in a high number of cores.
 
  ** TODO **
 
