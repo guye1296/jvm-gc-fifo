@@ -557,6 +557,9 @@ extern __thread RingQueue *hazardptr;
  \begin{itemize}
    \item NUMA transformations can make a lot of impact **TODO**
    \item Indentifying all the synchronization variable hotspots is vital to **TODO**
+   \item We managed to improve the GC throughout by using the NUMA-aware queues.
+   \item Without NUMA Transformation it seems that both msqueue and lcrq achieve about the same results.
+   \item As we seen in the previous section we managed to improve msqueue results with NUMA transformations in contrast to lcrq results. Thus msqueue achieved the best results.
    \item ** TODO **
  \end{itemize}
 
