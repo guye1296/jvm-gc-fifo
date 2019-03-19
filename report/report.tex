@@ -525,25 +525,40 @@ This gave us the ability to quickly analyze results of different runs.
 
  \includegraphics[width=\textwidth]{graph-no-schedule.png}
 
- It is seen that the original implementation (\textit{``NAPS``}) has the least amount of throughout (TP) between the three queues, and that given MSQUEUE and LCRQ have about the same performane - altough LCRQ has somewhat better performance in a high number of cores.
+ It is seen that the original implementation (\textit{``NAPS``}) has the least amount of throughout (TP) between the three queues. The given MSQUEUE and LCRQ have about the same performane without NUMA transformations - altough LCRQ has somewhat better performance in a high number of cores.
 
- ** TODO **
+ ** TODO ** - difference between NAPS and given MS-QUEUE
 
  \subsubsection{MSQUEUE}
 
  \includegraphics[width=\textwidth]{graph-msqueue.png}
 
- ** TODO **
+ There is a noticable improvement that is caused by NUMA transformations. It can be seen that all of the different transformations that were run achieved better TP than the \textit{no transformation} run. 
+
+ In the specific context - **TODO** rank the NUMA transformations
+
+
 
  \subsubsection{LCRQ}
 
  \includegraphics[width=\textwidth]{graph-lcrq.png}
 
- ** TODO **
+ There is \textbf{no} noticable improvement caused by NUMA transformations. It it worth noting that in LCRQ, unlike MS-QUEUE, there are additional synchronization variables to the queue's head and tail - the \textit{hazard pointers} and the \textit{nrq} (**TODO** - what is nrq?), which are used heavily in the implementation.
 
- \subsection{Conclusion}
+ \begin{lstlisting}[language=C]
+extern __thread RingQueue *nrq;
+extern __thread RingQueue *hazardptr;
+ \end{lstlisting}
 
- ** TODO **
+ Because there are no NUMA transformations over those two variables, the overall affect of NUMA transformations in LCRQ is small.
+
+ \subsection{Conclusions}
+
+ \begin{itemize}
+   \item NUMA transformations can make a lot of impact **TODO**
+   \item Indentifying all the synchronization variable hotspots is vital to **TODO**
+   \item ** TODO **
+ \end{itemize}
 
   % references
   \medskip
